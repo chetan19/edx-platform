@@ -134,6 +134,35 @@ class ResetPasswordTests(TestCase):
 
         self.assertIn(expected_msg, msg)
 
+    @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', "Test only valid in LMS")
+    @patch('django.core.mail.send_mail')
+    @ddt.data(('Crazy Awesome Site', 'Crazy Awesome Site'), (None, 'edX'))
+    @ddt.unpack
+    def test_reset_password_email_domain(self, domain_override, platform_name, send_email):
+        """
+        Tests that the right url domain and platform name is included in
+        the reset password email
+        """
+        with patch("django.conf.settings.PLATFORM_NAME", platform_name):
+            req = self.request_factory.post(
+                '/password_reset/', {'email': self.user.email}
+            )
+            # sarina
+            req.get_host = Mock(return_value=domain_override)
+            resp = password_reset(req)
+            _, msg, _, _ = send_email.call_args[0]
+
+            reset_msg = "you requested a password reset for your user account at {}"
+            if domain_override:
+                reset_msg = reset_msg.format(domain_override)
+            else:
+                reset_msg = reset_msg.format(settings.SITE_NAME)
+
+            self.assertIn(reset_msg, msg)
+
+            sign_off = "The {} Team".format(platform_name)
+            self.assertIn(sign_off, msg)
+
     @patch('student.views.password_reset_confirm')
     def test_reset_password_bad_token(self, reset_confirm):
         """Tests bad token and uidb36 in password reset"""
