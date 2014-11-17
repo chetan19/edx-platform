@@ -83,7 +83,7 @@ class EnrollmentTest(TestCase):
         self.assertEquals(result['mode'], mode)
         self.assertTrue(result['is_active'])
 
-        result = api.deactivate_enrollment(self.USERNAME, self.COURSE_ID)
+        result = api.update_enrollment(self.USERNAME, self.COURSE_ID, mode=mode, is_active=False)
         self.assertIsNotNone(result)
         self.assertEquals(result['student'], self.USERNAME)
         self.assertEquals(result['course']['course_id'], self.COURSE_ID)
@@ -94,7 +94,7 @@ class EnrollmentTest(TestCase):
     def test_unenroll_not_enrolled_in_course(self):
         # Add a fake course enrollment information to the fake data API
         fake_data_api.add_course(self.COURSE_ID, course_modes=['honor'])
-        api.deactivate_enrollment(self.USERNAME, self.COURSE_ID)
+        api.update_enrollment(self.USERNAME, self.COURSE_ID, mode='honor', is_active=False)
 
     @ddt.data(
         # Simple test of honor and verified.

@@ -5,7 +5,7 @@ define(['js/common_helpers/ajax_helpers', 'js/student_account/enrollment'],
         describe( 'edx.student.account.EnrollmentInterface', function() {
 
             var COURSE_KEY = 'edX/DemoX/Fall',
-                ENROLL_URL = '/enrollment/v0/course/edX/DemoX/Fall',
+                ENROLL_URL = '/api/enrollment/v1/course/edX/DemoX/Fall',
                 FORWARD_URL = '/course_modes/choose/edX/DemoX/Fall/';
 
             beforeEach(function() {

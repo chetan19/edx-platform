@@ -1,7 +1,8 @@
 """
-Tests for student enrollment.
+Tests for user enrollment.
 """
 import ddt
+from django.contrib.auth.models import User
 import json
 import unittest
 
@@ -27,7 +28,7 @@ MODULESTORE_CONFIG = mixed_store_config(settings.COMMON_TEST_DATA_ROOT, {}, incl
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
 class EnrollmentTest(ModuleStoreTestCase, APITestCase):
     """
-    Test student enrollment, especially with different course modes.
+    Test user enrollment, especially with different course modes.
     """
     USERNAME = "Bob"
     EMAIL = "bob@example.com"
@@ -77,8 +78,7 @@ class EnrollmentTest(ModuleStoreTestCase, APITestCase):
         )
 
         # Enroll in the course, this will fail if the mode is not explicitly professional.
-        resp = self.client.post(reverse('courseenrollment', kwargs={'course_id': (unicode(self.course.id))}))
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        resp = self._create_enrollment(expected_status=status.HTTP_400_BAD_REQUEST)
 
         # While the enrollment wrong is invalid, the response content should have
         # all the valid enrollment modes.
@@ -92,36 +92,63 @@ class EnrollmentTest(ModuleStoreTestCase, APITestCase):
         self.client.logout()
 
         # Try to enroll, this should fail.
-        resp = self.client.post(reverse('courseenrollment', kwargs={'course_id': (unicode(self.course.id))}))
-        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self._create_enrollment(expected_status=status.HTTP_403_FORBIDDEN)
 
     def test_user_not_activated(self):
-        # Create a user account, but don't activate it
+        # Log out the default user, Bob.
+        self.client.logout()
+
+        # Create a user account
         self.user = UserFactory.create(
             username="inactive",
             email="inactive@example.com",
             password=self.PASSWORD,
-            is_active=False
+            is_active=True
         )
 
         # Log in with the unactivated account
         self.client.login(username="inactive", password=self.PASSWORD)
 
+        # Deactivate the user. Has to be done after login to get the user into the
+        # request and properly logged in.
+        self.user.is_active = False
+        self.user.save()
+
         # Enrollment should succeed, even though we haven't authenticated.
-        resp = self.client.post(reverse('courseenrollment', kwargs={'course_id': (unicode(self.course.id))}))
-        self.assertEqual(resp.status_code, 200)
+        self._create_enrollment()
+
+    def test_user_does_not_match_url(self):
+        # Try to enroll a user that is not the authenticated user.
+        CourseModeFactory.create(
+            course_id=self.course.id,
+            mode_slug='honor',
+            mode_display_name='Honor',
+        )
+        self._create_enrollment(username='not_the_user', expected_status=status.HTTP_404_NOT_FOUND)
 
     def test_with_invalid_course_id(self):
-        # Create an enrollment
-        resp = self.client.post(reverse('courseenrollment', kwargs={'course_id': 'entirely/fake/course'}))
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self._create_enrollment(course_id='entirely/fake/course', expected_status=status.HTTP_400_BAD_REQUEST)
 
-    def _create_enrollment(self):
+    def _create_enrollment(self, course_id=None, username=None, expected_status=status.HTTP_200_OK):
+        course_id = unicode(self.course.id) if course_id is None else course_id
+        username = self.user.username if username is None else username
         """Enroll in the course and verify the URL we are sent to. """
-        resp = self.client.post(reverse('courseenrollment', kwargs={'course_id': (unicode(self.course.id))}))
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        data = json.loads(resp.content)
-        self.assertEqual(unicode(self.course.id), data['course']['course_id'])
-        self.assertEqual('honor', data['mode'])
-        self.assertTrue(data['is_active'])
+
+        resp = self.client.post(
+            reverse('courseenrollments'),
+            {
+                'course_details': {
+                    'course_id': course_id
+                },
+                'user': username
+            },
+            format='json'
+        )
+        self.assertEqual(resp.status_code, expected_status)
+
+        if expected_status == status.HTTP_200_OK:
+            data = json.loads(resp.content)
+            self.assertEqual(course_id, data['course_details']['course_id'])
+            self.assertEqual('honor', data['mode'])
+            self.assertTrue(data['is_active'])
         return resp

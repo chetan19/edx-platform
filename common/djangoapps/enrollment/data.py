@@ -13,31 +13,31 @@ from student.models import CourseEnrollment, NonExistentCourseError
 log = logging.getLogger(__name__)
 
 
-def get_course_enrollments(student_id):
-    """Retrieve a list representing all aggregated data for a student's course enrollments.
+def get_course_enrollments(user_id):
+    """Retrieve a list representing all aggregated data for a user's course enrollments.
 
-    Construct a representation of all course enrollment data for a specific student.
+    Construct a representation of all course enrollment data for a specific user.
 
     Args:
-        student_id (str): The name of the student to retrieve course enrollment information for.
+        user_id (str): The name of the user to retrieve course enrollment information for.
 
     Returns:
-        A serializable list of dictionaries of all aggregated enrollment data for a student.
+        A serializable list of dictionaries of all aggregated enrollment data for a user.
 
     """
     qset = CourseEnrollment.objects.filter(
-        user__username=student_id, is_active=True
+        user__username=user_id, is_active=True
     ).order_by('created')
     return CourseEnrollmentSerializer(qset).data  # pylint: disable=no-member
 
 
-def get_course_enrollment(student_id, course_id):
-    """Retrieve an object representing all aggregated data for a student's course enrollment.
+def get_course_enrollment(user_id, course_id):
+    """Retrieve an object representing all aggregated data for a user's course enrollment.
 
-    Get the course enrollment information for a specific student and course.
+    Get the course enrollment information for a specific user and course.
 
     Args:
-        student_id (str): The name of the student to retrieve course enrollment information for.
+        user_id (str): The name of the user to retrieve course enrollment information for.
         course_id (str): The course to retrieve course enrollment information for.
 
     Returns:
@@ -47,22 +47,43 @@ def get_course_enrollment(student_id, course_id):
     course_key = CourseKey.from_string(course_id)
     try:
         enrollment = CourseEnrollment.objects.get(
-            user__username=student_id, course_id=course_key
+            user__username=user_id, course_id=course_key
         )
         return CourseEnrollmentSerializer(enrollment).data  # pylint: disable=no-member
     except CourseEnrollment.DoesNotExist:
         return None
 
 
-def update_course_enrollment(student_id, course_id, mode=None, is_active=None):
-    """Modify a course enrollment for a student.
+def create_course_enrollment(user_id, course_id, mode, is_active):
+    """Create a new course enrollment for the given user.
+
+    Creates a new course enrollment for the specified user username.
+
+    Args:
+        user_id (str): The name of the user to create a new course enrollment for.
+        course_id (str): The course to create the course enrollment for.
+        mode (str): (Optional) The mode for the new enrollment.
+        is_active (boolean): (Optional) Determines if the enrollment is active.
+
+    Returns:
+        A serializable dictionary representing the new course enrollment.
+
+    """
+    course_key = CourseKey.from_string(course_id)
+    user = User.objects.get(username=user_id)
+    enrollment = CourseEnrollment.enroll(user, course_key, check_access=True)
+    return _update_enrollment(enrollment, is_active=is_active, mode=mode)
+
+
+def update_course_enrollment(user_id, course_id, mode=None, is_active=None):
+    """Modify a course enrollment for a user.
 
     Allows updates to a specific course enrollment.
 
     Args:
-        student_id (str): The name of the student to retrieve course enrollment information for.
+        user_id (str): The name of the user to retrieve course enrollment information for.
         course_id (str): The course to retrieve course enrollment information for.
-        mode (str): (Optional) The mode for the new enrollment.
+        mode (str): (Optional) If specified, modify the mode for this enrollment.
         is_active (boolean): (Optional) Determines if the enrollment is active.
 
     Returns:
@@ -70,12 +91,15 @@ def update_course_enrollment(student_id, course_id, mode=None, is_active=None):
 
     """
     course_key = CourseKey.from_string(course_id)
-    student = User.objects.get(username=student_id)
-    if not CourseEnrollment.is_enrolled(student, course_key):
-        enrollment = CourseEnrollment.enroll(student, course_key, check_access=True)
-    else:
-        enrollment = CourseEnrollment.objects.get(user=student, course_id=course_key)
+    user = User.objects.get(username=user_id)
+    try:
+        enrollment = CourseEnrollment.objects.get(user=user, course_id=course_key)
+        return _update_enrollment(enrollment, is_active=is_active, mode=mode)
+    except CourseEnrollment.DoesNotExist:
+        return None
 
+
+def _update_enrollment(enrollment, is_active=None, mode=None):
     enrollment.update_enrollment(is_active=is_active, mode=mode)
     enrollment.save()
     return CourseEnrollmentSerializer(enrollment).data  # pylint: disable=no-member
