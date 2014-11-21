@@ -540,6 +540,17 @@
         margin-bottom: $baseline;
         padding-bottom: ($baseline/2);
 
+        &.prerequisite-course {
+          .pre-requisite {
+            max-width: 39%;
+            @extend %text-truncated;
+          }
+          .tip {
+            margin: $baseline 0 ($baseline/2);
+            font-size: 0.8em;
+          }
+        }
+
         &.prerequisites {
           border: 1px solid $border-color-2;
           margin: 0 -($baseline/2) 0;

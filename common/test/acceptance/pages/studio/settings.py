@@ -14,3 +14,10 @@ class SettingsPage(CoursePage):
 
     def is_browser_on_page(self):
         return self.q(css='body.view-settings').present
+
+    @property
+    def pre_requisite_course(self):
+        """
+        Returns the pre-requisite course drop down field.
+        """
+        return self.q(css='#pre-requisite-course')

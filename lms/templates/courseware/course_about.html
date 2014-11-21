@@ -310,6 +310,10 @@
 
           ##<li><i class="icon icon-time"></i><p>${_('Course Length')}</p><span class="course-length">${_('{number} weeks').format(number=15)}</span></li>
 
+          % if pre_requisite_course:
+          <li class="prerequisite-course"><div class="icon icon-list-ul"></div><p>${_("Requirements")}</p><span class="pre-requisite">${pre_requisite_course}</span>
+          <p class="tip">${_("Access to this course requires the successful completion of ")}${pre_requisite_course}.</p></li>
+          % endif
           % if get_course_about_section(course, "prerequisites"):
             <li class="prerequisites"><i class="icon icon-book"></i><p>${_("Prerequisites")}</p><span class="start-date">${get_course_about_section(course, "prerequisites")}</span></li>
           % endif
