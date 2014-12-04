@@ -1,6 +1,6 @@
 """ BASE API VIEWS """
+from django.core.urlresolvers import reverse
 from django.middleware.csrf import get_token
-
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -16,11 +16,11 @@ class SystemDetail(SecureAPIView):
         GET /api/system/
         """
         base_uri = generate_base_uri(request)
-        response_data = {}
-        response_data['name'] = "Open edX System API"
-        response_data['description'] = "System interface for managing groups, users, and sessions."
-        response_data['documentation'] = "http://docs.openedxapi.apiary.io/#get-%2Fapi%2Fsystem"
-        response_data['uri'] = base_uri
+        response_data = {
+            'name': "Open edX System API",
+            'description': "System interface for retrieving course info.",
+            'uri': base_uri
+        }
         return Response(response_data, status=status.HTTP_200_OK)
 
 
@@ -32,17 +32,14 @@ class ApiDetail(SecureAPIView):
         GET /api/
         """
         base_uri = generate_base_uri(request)
-        response_data = {}
-        response_data['name'] = "Open edX API"
-        response_data['description'] = "Machine interface for interactions with Open edX."
-        response_data['documentation'] = "http://docs.openedxapi.apiary.io"
-        response_data['uri'] = base_uri
-        response_data['csrf_token'] = get_token(request)
-        response_data['resources'] = []
-        response_data['resources'].append({'uri': base_uri + 'courses'})
-        response_data['resources'].append({'uri': base_uri + 'groups'})
-        response_data['resources'].append({'uri': base_uri + 'projects'})
-        response_data['resources'].append({'uri': base_uri + 'sessions'})
-        response_data['resources'].append({'uri': base_uri + 'system'})
-        response_data['resources'].append({'uri': base_uri + 'users'})
+        response_data = {
+            'name': "Open edX API",
+            'description': "Machine interface for interactions with Open edX.",
+            'uri': base_uri,
+            'csrf_token': get_token(request),
+            'resources': [
+                {'uri': base_uri + reverse('server_api:courses:list')},
+                {'uri': base_uri + reverse('server_api:system')}
+            ]
+        }
         return Response(response_data, status=status.HTTP_200_OK)

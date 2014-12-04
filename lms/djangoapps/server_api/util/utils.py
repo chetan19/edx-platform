@@ -4,10 +4,10 @@ import socket
 import struct
 import json
 import datetime
+
 from django.utils.timezone import now
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta, MO
-from django.conf import settings
 
 
 def address_exists_in_network(ip_address, net_n_bits):
@@ -140,61 +140,3 @@ def get_interval_bounds(date_val, interval):
         end = begin + relativedelta(months=1)
     end = end - relativedelta(microseconds=1)
     return begin, end
-
-
-def detect_db_engine():
-    """
-    detects database engine used
-    """
-    engine = 'mysql'
-    backend = settings.DATABASES['default']['ENGINE']
-    if 'sqlite' in backend:
-        engine = 'sqlite'
-    return engine
-
-
-def get_time_series_data(queryset, start, end, interval='days',
-                         date_field='created', date_field_model=None,
-                         aggregate=None):
-    """
-    Aggregate over time intervals to compute time series representation of data
-    """
-    engine = detect_db_engine()
-    start, _ = get_interval_bounds(start, interval.rstrip('s'))
-    _, end = get_interval_bounds(end, interval.rstrip('s'))
-
-    if date_field_model:
-        date_field = '`{}`.`{}`'.format(date_field_model._meta.db_table, date_field)  # pylint: disable=W0212
-
-    sql = {
-        'mysql': {
-            'days': "DATE_FORMAT({}, '%%Y-%%m-%%d')".format(date_field),
-            'weeks': "DATE_FORMAT(DATE_SUB({}, INTERVAL(WEEKDAY({})) DAY), '%%Y-%%m-%%d')".format(date_field,
-                                                                                                  date_field),
-            'months': "DATE_FORMAT({}, '%%Y-%%m-01')".format(date_field)
-        },
-        'sqlite': {
-            'days': "strftime('%%Y-%%m-%%d', {})".format(date_field),
-            'weeks': "strftime('%%Y-%%m-%%d', julianday({}) - strftime('%%w', {}) + 1)".format(date_field,
-                                                                                               date_field),
-            'months': "strftime('%%Y-%%m-01', {})".format(date_field)
-        }
-    }
-    interval_sql = sql[engine][interval]
-    where_clause = '{} BETWEEN "{}" AND "{}"'.format(date_field,
-                                                     to_mysql_datetime(start) if engine == 'mysql' else start,
-                                                     to_mysql_datetime(end) if engine == 'mysql' else end)
-    aggregate_data = queryset.extra(select={'d': interval_sql}, where=[where_clause]).order_by().values('d').\
-        annotate(agg=aggregate)
-
-    today = strip_time(now())
-    data = dict((strip_time(parse_datetime(item['d'], today)), item['agg']) for item in aggregate_data)
-
-    series = []
-    dt_key = start
-    while dt_key < end:
-        value = data.get(dt_key, 0)
-        series.append((dt_key, value,))
-        dt_key += relativedelta(**{interval: 1})
-
-    return series
