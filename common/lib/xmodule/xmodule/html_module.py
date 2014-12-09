@@ -136,7 +136,7 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
     # snippets that will be included in the middle of pages.
 
     @classmethod
-    def load_definition(cls, xml_object, system, location):
+    def load_definition(cls, xml_object, system, location, id_generator):
         '''Load a descriptor from the specified xml_object:
 
         If there is a filename attribute, load it as a string, and

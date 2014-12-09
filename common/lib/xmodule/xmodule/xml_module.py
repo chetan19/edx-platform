@@ -181,7 +181,7 @@ class XmlDescriptor(XModuleDescriptor):
             raise Exception, msg, sys.exc_info()[2]
 
     @classmethod
-    def load_definition(cls, xml_object, system, def_id):
+    def load_definition(cls, xml_object, system, def_id, id_generator):
         '''Load a descriptor definition from the specified xml_object.
         Subclasses should not need to override this except in special
         cases (e.g. html module)'''
@@ -208,6 +208,8 @@ class XmlDescriptor(XModuleDescriptor):
                         break
 
             definition_xml = cls.load_file(filepath, system.resources_fs, def_id)
+            usage_id = id_generator.create_usage(def_id)
+            system.parse_asides(definition_xml, def_id, usage_id, id_generator)
 
             # Add the attributes from the pointer node
             definition_xml.attrib.update(xml_object.attrib)
@@ -281,11 +283,12 @@ class XmlDescriptor(XModuleDescriptor):
             # read the actual definition file--named using url_name.replace(':','/')
             filepath = cls._format_filepath(xml_object.tag, name_to_pathname(url_name))
             definition_xml = cls.load_file(filepath, system.resources_fs, def_id)
+            system.parse_asides(definition_xml, def_id, usage_id, id_generator)
         else:
             definition_xml = xml_object
             filepath = None
 
-        definition, children = cls.load_definition(definition_xml, system, def_id)  # note this removes metadata
+        definition, children = cls.load_definition(definition_xml, system, def_id, id_generator)  # note this removes metadata
 
         # VS[compat] -- make Ike's github preview links work in both old and
         # new file layouts
