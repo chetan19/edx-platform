@@ -285,15 +285,7 @@ class XModuleMixin(XBlockMixin):
 
     @property
     def runtime(self):
-        # Handle XModule backwards compatibility. If this is a pure
-        # XBlock, and it has an xmodule_runtime defined, then we're in
-        # an XModule context, not an XModuleDescriptor context,
-        # so we should use the xmodule_runtime (ModuleSystem) as the runtime.
-        if (not isinstance(self, (XModule, XModuleDescriptor)) and
-                self.xmodule_runtime is not None):
-            return PureSystem(self.xmodule_runtime, self._runtime)
-        else:
-            return self._runtime
+        return PureSystem(self.xmodule_runtime, self._runtime)
 
     @runtime.setter
     def runtime(self, value):
@@ -1281,52 +1273,33 @@ class DescriptorSystem(MetricsMixin, ConfigurableFragmentWrapper, Runtime):  # p
             result['default_value'] = field.to_json(field.default)
         return result
 
-    def render(self, block, view_name, context=None):
-        if view_name in PREVIEW_VIEWS:
-            assert block.xmodule_runtime is not None
-            if isinstance(block, (XModule, XModuleDescriptor)):
-                to_render = block._xmodule
-            else:
-                to_render = block
-            return block.xmodule_runtime.render(to_render, view_name, context)
-        else:
-            return super(DescriptorSystem, self).render(block, view_name, context)
 
     def handler_url(self, block, handler_name, suffix='', query='', thirdparty=False):
-        if block.xmodule_runtime is not None:
-            return block.xmodule_runtime.handler_url(block, handler_name, suffix, query, thirdparty)
-        else:
-            # Currently, Modulestore is responsible for instantiating DescriptorSystems
-            # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
-            # that implements the correct handler url. So, for now, instead, we will reference a
-            # global function that the application can override.
-            return descriptor_global_handler_url(block, handler_name, suffix, query, thirdparty)
+        # Currently, Modulestore is responsible for instantiating DescriptorSystems
+        # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
+        # that implements the correct handler url. So, for now, instead, we will reference a
+        # global function that the application can override.
+        return descriptor_global_handler_url(block, handler_name, suffix, query, thirdparty)
 
     def local_resource_url(self, block, uri):
         """
         See :meth:`xblock.runtime.Runtime:local_resource_url` for documentation.
         """
-        if block.xmodule_runtime is not None:
-            return block.xmodule_runtime.local_resource_url(block, uri)
-        else:
-            # Currently, Modulestore is responsible for instantiating DescriptorSystems
-            # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
-            # that implements the correct local_resource_url. So, for now, instead, we will reference a
-            # global function that the application can override.
-            return descriptor_global_local_resource_url(block, uri)
+        # Currently, Modulestore is responsible for instantiating DescriptorSystems
+        # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
+        # that implements the correct local_resource_url. So, for now, instead, we will reference a
+        # global function that the application can override.
+        return descriptor_global_local_resource_url(block, uri)
 
     def get_asides(self, block):
         """
         See :meth:`xblock.runtime.Runtime:get_asides` for documentation.
         """
-        if getattr(block, 'xmodule_runtime', None) is not None:
-            return block.xmodule_runtime.get_asides(block)
-        else:
-            # Currently, Modulestore is responsible for instantiating DescriptorSystems
-            # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
-            # that implements the correct get_asides. So, for now, instead, we will reference a
-            # global function that the application can override.
-            return descriptor_global_get_asides(block)
+        # Currently, Modulestore is responsible for instantiating DescriptorSystems
+        # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
+        # that implements the correct get_asides. So, for now, instead, we will reference a
+        # global function that the application can override.
+        return descriptor_global_get_asides(block)
 
     def resource_url(self, resource):
         """
@@ -1334,17 +1307,13 @@ class DescriptorSystem(MetricsMixin, ConfigurableFragmentWrapper, Runtime):  # p
         """
         raise NotImplementedError("edX Platform doesn't currently implement XBlock resource urls")
 
-    def publish(self, block, event_type, event):
-        """
-        See :meth:`xblock.runtime.Runtime:publish` for documentation.
-        """
-        if block.xmodule_runtime is not None:
-            return block.xmodule_runtime.publish(block, event_type, event)
-
     def add_block_as_child_node(self, block, node):
         child = etree.SubElement(node, "unknown")
         child.set('url_name', block.url_name)
         block.add_xml_to_node(child)
+
+    def publish(self, block, event_type, event):
+        pass
 
 
 class XMLParsingSystem(DescriptorSystem):
@@ -1523,10 +1492,12 @@ class ModuleSystem(MetricsMixin, ConfigurableFragmentWrapper, Runtime):  # pylin
         pass
 
 
-class PureSystem(ModuleSystem, DescriptorSystem):
+class PureSystem(object):
     """
-    A subclass of both ModuleSystem and DescriptorSystem to provide pure (non-XModule) XBlocks
-    a single Runtime interface for both the ModuleSystem and DescriptorSystem, when available.
+    A class to provide pure (non-XModule) XBlocks a single Runtime
+    interface for both the ModuleSystem and DescriptorSystem, when
+    available.
+
     """
     # This system doesn't override a number of methods that are provided by ModuleSystem and DescriptorSystem,
     # namely handler_url, local_resource_url, query, and resource_url.
@@ -1535,11 +1506,31 @@ class PureSystem(ModuleSystem, DescriptorSystem):
     #
     # pylint: disable=abstract-method
     def __init__(self, module_system, descriptor_system):
+        # These attributes are set directly to __dict__ below to avoid a recursion in getattr/setattr.
+        #
         # N.B. This doesn't call super(PureSystem, self).__init__, because it is only inheriting from
         # ModuleSystem and DescriptorSystem to pass isinstance checks.
         # pylint: disable=super-init-not-called
-        self._module_system = module_system
-        self._descriptor_system = descriptor_system
+        self.__dict__["_module_system"] = module_system
+        self.__dict__["_descriptor_system"] = descriptor_system
+
+    def _get_student_block(self, block):
+        """
+        If block is an XModuleDescriptor that has been bound to a student, return
+        the corresponding XModule, instead of the XModuleDescriptor.
+
+        Otherwise, return block.
+        """
+        if isinstance(block, XModuleDescriptor) and block.xmodule_runtime:
+            return block._xmodule
+        else:
+            return block
+
+    def render(self, block, view_name, context=None):
+        if view_name in PREVIEW_VIEWS:
+            block = self._get_student_block(block)
+
+        return self.__getattr__('render')(block, view_name, context)
 
     def __getattr__(self, name):
         """
@@ -1551,6 +1542,24 @@ class PureSystem(ModuleSystem, DescriptorSystem):
             return getattr(self._module_system, name)
         except AttributeError:
             return getattr(self._descriptor_system, name)
+
+    def __setattr__(self, name, value):
+        """
+        If the ModuleSystem is set, set the attr on it.
+        Always set the attr on the DescriptorSystem.
+        """
+        if self._module_system:
+            setattr(self._module_system, name, value)
+        setattr(self._descriptor_system, name, value)
+
+    def __delattr__(self, name):
+        """
+        If the ModuleSystem is set, delete the attribute from it.
+        Always delete the attribute from the DescriptorSystem.
+        """
+        if self._module_system:
+            delattr(self._module_system, name)
+        delattr(self._descriptor_system, name)
 
 
 class DoNothingCache(object):

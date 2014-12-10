@@ -1148,8 +1148,5 @@ class TestEventPublishing(ModuleStoreTestCase, LoginEnrollmentTestCase):
 
         mock_track_function.assert_called_once_with(request)
 
-        if block_type == 'xblock':
-            self.assertFalse(mock_track_function.return_value.called)
-        else:
-            mock_track_function.return_value.assert_called_once_with(event_type, event)
+        mock_track_function.return_value.assert_called_once_with(event_type, event)
 
