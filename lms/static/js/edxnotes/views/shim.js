@@ -57,6 +57,57 @@ define(['jquery', 'underscore', 'annotator'], function ($, _, Annotator) {
     };
 
     /**
+     * Adds the Scroller Plugin which scrolls to a note with a certain id and
+     * opens it.
+     **/
+    Annotator.Plugin.Scroller = function (element, options) {
+        var getIdFromLocationHash, pluginInit, destroy, notesLoaded;
+
+        getIdFromLocationHash = function() {
+            return window.location.hash.substr(1);
+        };
+
+        pluginInit = function () {
+            // If the page URL contains a hash, we could be coming from a click
+            // on an anchor in the notes page. In that case, the hash is the id
+            // of the note that has to be scrolled to and opened.
+            if (getIdFromLocationHash()) {
+                this.annotator.subscribe("annotationsLoaded", notesLoaded);
+            }
+        };
+
+        destroy = function () {
+            this.annotator.unsubscribe("annotationsLoaded", notesLoaded);
+        };
+
+        notesLoaded = function (notes) {
+            var highlight, offset, event, hash = getIdFromLocationHash();
+
+            _.each(notes, function (note) {
+                if (note.id === hash) {
+                    highlight = $(note.highlights[0]);
+                    // Scroll to highlight
+                    $('html, body').animate({scrollTop: highlight.offset().top}, 'slow');
+                    // Open the note
+                    offset = highlight.offset();
+                    event = $.Event('click', {
+                        pageX: offset.left,
+                        pageY: offset.top
+                    });
+                    highlight.trigger(event);
+                }
+            });
+        };
+
+        return {
+            getIdFromLocationHash: getIdFromLocationHash,
+            pluginInit: pluginInit,
+            destroy: destroy,
+            notesLoaded: notesLoaded
+        }
+    };
+
+    /**
      * Modifies Annotator.highlightRange to add a "tabindex=0" attribute
      * to the <span class="annotator-hl"> markup that encloses the note.
      * These are then focusable via the TAB key.

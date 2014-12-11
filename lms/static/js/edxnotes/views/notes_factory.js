@@ -3,7 +3,7 @@
 define([
      'jquery', 'underscore', 'annotator', 'js/edxnotes/utils/logger', 'js/edxnotes/views/shim'
 ], function ($, _, Annotator, Logger) {
-    var plugins = ['Auth', 'Store'],
+    var plugins = ['Auth', 'Store', 'Scroller'],
         getOptions, setupPlugins, updateHeaders, getAnnotator;
 
     /**
