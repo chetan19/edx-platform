@@ -21,7 +21,6 @@ from xmodule.modulestore.exceptions import ItemNotFoundError
 from courseware.model_data import FieldDataCache
 from courseware.module_render import get_module_for_descriptor
 from student.tests.factories import UserFactory
-
 from .exceptions import EdxNotesParseError, EdxNotesServiceUnavailable
 from . import helpers
 
@@ -466,7 +465,7 @@ class EdxNotesHelpersTest(TestCase):
                 u"url": self._get_jump_to_url(self.vertical),
                 u"display_name": self.vertical.display_name_with_default,
             },
-            helpers.get_ancestor_context(self.course, modulestore(), self.html_module_1.location)
+            helpers.get_ancestor_context(modulestore(), self.course, self.html_module_1.location)
         )
 
     # pylint: disable=unused-argument
@@ -480,7 +479,7 @@ class EdxNotesHelpersTest(TestCase):
                 u"url": None,
                 u"display_name": None,
             },
-            helpers.get_ancestor_context(self.course, modulestore(), self.html_module_1.location)
+            helpers.get_ancestor_context(modulestore(), self.course, self.html_module_1.location)
         )
 
     @patch.dict("django.conf.settings.EDXNOTES_INTERFACE", {"url": "http://example.com"})
