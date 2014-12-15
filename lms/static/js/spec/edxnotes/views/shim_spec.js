@@ -112,5 +112,45 @@ define([
             // Check that second one doesn't have a bound click.edxnotes:freeze
             checkClickEventsNotBound('edxnotes:freeze' + annotators[1].uid);
         });
+
+        describe('EdxNotes Scroll Plugin', function() {
+            beforeEach(function() {
+                spyOn(annotators[0].plugins.Scroller, 'getIdFromLocationHash').andReturn('abc123');
+                spyOn($.fn, 'animate');
+            });
+
+            it('should scroll to a note, open it and freeze the annotator if its id is part of the url hash', function() {
+                annotators[0].plugins.Scroller.notesLoaded([{
+                    id: 'abc123',
+                    highlights: [highlights[0]]
+                }]);
+                expect($.fn.animate).toHaveBeenCalled();
+                highlights[0].mouseover();
+                highlights[0].mouseout();
+                checkAnnotatorIsFrozen(annotators[0]);
+            });
+
+            it('should not do anything if the url hash contains a wrong id', function() {
+                annotators[0].plugins.Scroller.notesLoaded([{
+                    id: 'def456',
+                    highlights: [highlights[0]]
+                }]);
+                expect($.fn.animate).not.toHaveBeenCalled();
+                highlights[0].mouseover();
+                highlights[0].mouseout();
+                checkAnnotatorIsUnfrozen(annotators[0]);
+            });
+
+            it('should not do anything if the url hash contains an empty id', function() {
+                annotators[0].plugins.Scroller.notesLoaded([{
+                    id: '',
+                    highlights: [highlights[0]]
+                }]);
+                expect($.fn.animate).not.toHaveBeenCalled();
+                highlights[0].mouseover();
+                highlights[0].mouseout();
+                checkAnnotatorIsUnfrozen(annotators[0]);
+            });
+        });
     });
 });
