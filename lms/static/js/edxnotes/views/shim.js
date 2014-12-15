@@ -84,12 +84,17 @@ define(['jquery', 'underscore', 'annotator'], function ($, _, Annotator) {
             var highlight, offset, event, hash = getIdFromLocationHash();
 
             _.each(notes, function (note) {
-                if (note.id === hash) {
+                if (note.id === hash && note.highlights.length) {
+                    // Clear the page URL hash, it won't be needed once we've
+                    // scrolled and opened the relevant note. And it would
+                    // unnecessarily repeat the steps below if we come from
+                    // another sequential.
+                    window.location.hash = '';
                     highlight = $(note.highlights[0]);
-                    // Scroll to highlight
-                    $('html, body').animate({scrollTop: highlight.offset().top}, 'slow');
-                    // Open the note
                     offset = highlight.offset();
+                    // Scroll to highlight
+                    $('html, body').animate({scrollTop: offset.top}, 'slow');
+                    // Open the note
                     event = $.Event('click', {
                         pageX: offset.left,
                         pageY: offset.top
