@@ -439,41 +439,15 @@
       margin-bottom: $baseline;
     }
 
-
     // UI: form fields
     .list-fields {
 
       .field {
         @extend %wipe-last-child;
-        display: block;
-        width: 100%;
         margin-bottom: ($baseline/4);
 
         label {
           @extend %t-copy-sub1;
-          @include transition(color $tmg-f3 ease-in-out 0s);
-
-          &.is-focused {
-            color: $blue;
-          }
-        }
-
-        input, textarea {
-          @extend %t-copy-base;
-          @include transition(all $tmg-f2 ease-in-out 0s);
-          padding: ($baseline/2);
-        }
-
-        .tip {
-          @extend %t-copy-sub1;
-          @include transition(color, 0.15s, ease-in-out);
-          display: block;
-          margin-top: ($baseline/4);
-          color: $gray-l2;
-        }
-
-        .tip-warning {
-          color: $gray-d2;
         }
       }
 
