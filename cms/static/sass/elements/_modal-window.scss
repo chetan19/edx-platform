@@ -113,7 +113,7 @@
       @extend %t-strong;
       margin-bottom: ($baseline/4);
       text-transform: uppercase;
-      letter-spacing: 0.1rem;
+      letter-spacing: 0.1;
       color: $gray-l2;
     }
 
