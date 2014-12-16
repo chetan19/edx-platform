@@ -471,7 +471,6 @@
         @extend %t-copy-sub2;
         @extend %t-regular;
         display: block;
-        margin-top: ($baseline/4);
         color: $color-error;
       }
     }
