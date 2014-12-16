@@ -428,19 +428,6 @@
   // MODAL TYPE: component - visibility modal
   .xblock-visibility_view {
 
-    // UI: visibility summary
-    .visibility-summary-title {
-      margin-bottom: ($baseline*0.75);
-      padding-bottom: ($baseline*0.75);
-    }
-
-    .visibility-summary-value {
-      display: inline-block;
-      vertical-align: top;
-      margin-left: ($baseline/4);
-      @extend %t-strong;
-    }
-
     .visibility-controls-secondary {
       max-height: 100%;
       overflow-y: scroll;
