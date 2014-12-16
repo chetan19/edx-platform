@@ -479,6 +479,7 @@
     // CASE: no groups configured for visibility
     .is-not-configured {
       @extend %no-content;
+      padding: ($baseline);
       text-align: left; // reset for %no-content's default styling
 
       .title {
