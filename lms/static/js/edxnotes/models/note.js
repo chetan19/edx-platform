@@ -16,7 +16,9 @@ define(['backbone', 'underscore.string'], function (Backbone) {
                 'url': null
             },
             'ranges': [],
+            // Flag indicating current state of the note: expanded or collapsed.
             'is_expanded': false,
+            // Flag indicating whether `More` link should be shown.
             'show_link': false
         },
 
