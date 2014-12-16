@@ -14,7 +14,7 @@ def order_history(user, **kwargs):
      course_org_filter: Current Microsite's ORG.
      org_filter_out_set: A list of all other Microsites' ORGs.
     """
-    course_org_filter = kwargs['course_org_filter'] if 'course_org_filter' in kwargs else ''
+    course_org_filter = kwargs['course_org_filter'] if 'course_org_filter' in kwargs else None
     org_filter_out_set = kwargs['org_filter_out_set'] if 'org_filter_out_set' in kwargs else []
 
     order_history_list = []
