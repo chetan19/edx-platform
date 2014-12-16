@@ -28,7 +28,7 @@ class TestAsidesXmlStore(TestCase):
     """
     Test Asides sourced from xml store
     """
-    @patch('xmodule.x_module.descriptor_global_applicable_aside_types', lambda block: ['test_aside'])
+    @patch('xmodule.modulestore.xml.ImportSystem.applicable_aside_types', lambda self, block: ['test_aside'])
     @XBlockAside.register_temp_plugin(AsideTestType, 'test_aside')
     def test_xml_aside(self):
         """
@@ -40,15 +40,11 @@ class TestAsidesXmlStore(TestCase):
                 Check whether block has the expected aside w/ its fields and then recurse to the block's children
                 """
                 asides = block.runtime.get_asides(block)
-                test_aside = None
-                for aside in asides:
-                    if isinstance(aside, AsideTestType):
-                        test_aside = aside
-                        break
-                self.assertIsNotNone(test_aside, "Didn't find aside for {}".format(block.scope_ids.usage_id))
+                self.assertEqual(len(asides), 1, "Found {} asides but expected only test_aside".format(asides))
+                self.assertIsInstance(asides[0], AsideTestType)
                 category = block.scope_ids.block_type
-                self.assertEqual(test_aside.data_field, "{} aside data".format(category))
-                self.assertEqual(test_aside.content, "{} Aside".format(category.capitalize()))
+                self.assertEqual(asides[0].data_field, "{} aside data".format(category))
+                self.assertEqual(asides[0].content, "{} Aside".format(category.capitalize()))
 
                 for child in block.get_children():
                     check_block(child)
