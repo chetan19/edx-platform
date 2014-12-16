@@ -61,27 +61,30 @@ define(['jquery', 'underscore', 'annotator'], function ($, _, Annotator) {
      * opens it.
      **/
     Annotator.Plugin.Scroller = function (element, options) {
-        var getIdFromLocationHash, pluginInit, destroy, notesLoaded;
+        // Call the Annotator.Plugin constructor this sets up the element and
+        // options properties.
+        Annotator.Plugin.apply(this, arguments);
+    };
 
-        getIdFromLocationHash = function() {
+    $.extend(Annotator.Plugin.Scroller.prototype, new Annotator.Plugin(), {
+        events: {},
+        options: {},
+        getIdFromLocationHash: function() {
             return window.location.hash.substr(1);
-        };
-
-        pluginInit = function () {
+        },
+        pluginInit: function () {
             // If the page URL contains a hash, we could be coming from a click
             // on an anchor in the notes page. In that case, the hash is the id
             // of the note that has to be scrolled to and opened.
-            if (getIdFromLocationHash()) {
-                this.annotator.subscribe("annotationsLoaded", notesLoaded);
+            if (this.getIdFromLocationHash()) {
+                this.annotator.subscribe('annotationsLoaded', _.bind(this.notesLoaded, this));
             }
-        };
-
-        destroy = function () {
-            this.annotator.unsubscribe("annotationsLoaded", notesLoaded);
-        };
-
-        notesLoaded = function (notes) {
-            var highlight, offset, event, hash = getIdFromLocationHash();
+        },
+        destroy: function () {
+            this.annotator.unsubscribe('annotationsLoaded', _.bind(this.notesLoaded, this));
+        },
+        notesLoaded: function (notes) {
+            var highlight, offset, event, hash = this.getIdFromLocationHash();
 
             _.each(notes, function (note) {
                 if (note.id === hash && note.highlights.length) {
@@ -102,15 +105,8 @@ define(['jquery', 'underscore', 'annotator'], function ($, _, Annotator) {
                     highlight.trigger(event);
                 }
             });
-        };
-
-        return {
-            getIdFromLocationHash: getIdFromLocationHash,
-            pluginInit: pluginInit,
-            destroy: destroy,
-            notesLoaded: notesLoaded
         }
-    };
+    });
 
     /**
      * Modifies Annotator.highlightRange to add a "tabindex=0" attribute
