@@ -124,6 +124,7 @@ define([
                     id: 'abc123',
                     highlights: [highlights[0]]
                 }]);
+                annotators[0].onHighlightMouseover.reset();
                 expect($.fn.animate).toHaveBeenCalled();
                 highlights[0].mouseover();
                 highlights[0].mouseout();
