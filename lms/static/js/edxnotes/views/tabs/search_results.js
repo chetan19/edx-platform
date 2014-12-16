@@ -9,6 +9,9 @@ define([
             tagName: 'section',
             className: 'tab-panel',
             id: 'search-results-panel',
+            attributes: {
+                'tabindex': -1
+            },
             highlightMatchedText: true,
             render: function () {
                 var container = document.createDocumentFragment();
@@ -42,6 +45,9 @@ define([
             tagName: 'section',
             className: 'tab-panel',
             id: 'no-results-panel',
+            attributes: {
+                'tabindex': -1
+            },
             render: function () {
                 var message = gettext('No results found for "%(query_string)s".');
                 this.$el.html(interpolate(message, {
@@ -74,6 +80,7 @@ define([
         },
 
         renderContent: function () {
+            this.getLoadingIndicator().focus();
             return this.searchPromise.done(_.bind(function () {
                 this.contentView = this.getSubView();
                 if (this.contentView) {
@@ -135,8 +142,13 @@ define([
                 total: total,
                 searchQuery: searchQuery
             };
+
             if (this.searchDeferred) {
                 this.searchDeferred.resolve();
+            }
+
+            if (this.contentView) {
+                this.contentView.$el.focus();
             }
         },
 

@@ -86,17 +86,24 @@ define([
         onClose: function () { },
 
         /**
+         * Returns the page's loading indicator.
+         */
+        getLoadingIndicator: function() {
+            return this.$('.ui-loading');
+        },
+
+        /**
          * Shows the page's loading indicator.
          */
         showLoadingIndicator: function() {
-            this.$('.ui-loading').removeClass('is-hidden');
+            this.getLoadingIndicator().removeClass('is-hidden');
         },
 
         /**
          * Hides the page's loading indicator.
          */
         hideLoadingIndicator: function() {
-            this.$('.ui-loading').addClass('is-hidden');
+            this.getLoadingIndicator().addClass('is-hidden');
         },
 
 
@@ -106,7 +113,8 @@ define([
         showErrorMessage: function (message) {
             this.$('.inline-error')
                 .text(message)
-                .removeClass('is-hidden');
+                .removeClass('is-hidden')
+                .focus();
         },
 
         /**

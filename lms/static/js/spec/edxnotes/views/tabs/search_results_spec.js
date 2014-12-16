@@ -81,6 +81,7 @@ define([
                 is_closable: true
             });
             expect(view.$('#search-results-panel')).toExist();
+            expect(view.$('#search-results-panel')).toBeFocused();
             expect(view.$('.note-comments').eq(1)).toContainHtml(
                 '<span class="note-highlight">Second</span>'
             );
@@ -97,6 +98,7 @@ define([
 
             submitForm(view.searchBox, 'test query');
             expect(view.$('.ui-loading')).not.toHaveClass('is-hidden');
+            expect(view.$('.ui-loading')).toBeFocused();
             expect(this.tabsCollection).toHaveLength(1);
             expect(view.searchResults).toBeNull();
             expect(view.$('.tab-panel')).not.toExist();
@@ -115,6 +117,7 @@ define([
             });
 
             expect(view.$('#search-results-panel')).not.toExist();
+            expect(view.$('#no-results-panel')).toBeFocused();
             expect(view.$('#no-results-panel')).toExist();
             expect(view.$('.note-highlight')).not.toExist();
             expect(view.$('#no-results-panel')).toContainText(

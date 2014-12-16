@@ -213,6 +213,10 @@
 
 .wrapper-tabs {
 
+  .tab-panel, .inline-error, .ui-loading {
+    outline: none;
+  }
+
   .inline-error {
     color: $red;
     border-bottom: 1px solid $red;

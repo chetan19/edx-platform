@@ -29,12 +29,12 @@
             </div>
 
             <section class="wrapper-tabs">
-                <div class="inline-error is-hidden"></div>
                 <div class="tab-list is-hidden">
                     <h2 id="tab-view" class="tabs-label">${_('View notes by:')}</h2>
                 </div>
+                <div class="inline-error is-hidden" tabindex="-1"></div>
             % if notes:
-                <div class="ui-loading">
+                <div class="ui-loading" tabindex="-1">
                     <p><span class="spin"><i class="icon-refresh"></i></span> <span class="copy">${_("Loading...")}</span></p>
                 </div>
             % else:

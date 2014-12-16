@@ -94,14 +94,16 @@ define([
         });
 
         it('can show/hide error messages', function () {
-            var view = getView(this.tabsCollection);
+            var view = getView(this.tabsCollection),
+                errorHolder = view.$('.inline-error');
             view.showErrorMessage('<p>error message is here</p>');
-            expect(view.$('.inline-error')).not.toHaveClass('is-hidden');
-            expect(view.$('.inline-error')).toContainText('<p>error message is here</p>');
+            expect(errorHolder).not.toHaveClass('is-hidden');
+            expect(errorHolder).toBeFocused();
+            expect(errorHolder).toContainText('<p>error message is here</p>');
 
             view.hideErrorMessage();
-            expect(view.$('.inline-error')).toHaveClass('is-hidden');
-            expect(view.$('.inline-error')).toBeEmpty();
+            expect(errorHolder).toHaveClass('is-hidden');
+            expect(errorHolder).toBeEmpty();
         });
     });
 });
