@@ -79,7 +79,6 @@ import external_auth.views
 
 from bulk_email.models import Optout, CourseAuthorization
 import shoppingcart
-from shoppingcart.models import DonationConfiguration, OrderItem, PaidCourseRegistration, CourseRegCodeItem  # pylint: disable=import-error
 from openedx.core.djangoapps.user_api.models import UserPreference
 from lang_pref import LANGUAGE_KEY
 
@@ -105,7 +104,7 @@ from student.helpers import (
     check_verify_status_by_course
 )
 from xmodule.error_module import ErrorDescriptor
-from shoppingcart.models import CourseRegistrationCode
+from shoppingcart.models import DonationConfiguration, CourseRegistrationCode
 from openedx.core.djangoapps.user_api.api import profile as profile_api
 
 import analytics

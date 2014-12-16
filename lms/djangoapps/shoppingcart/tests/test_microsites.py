@@ -115,7 +115,7 @@ class TestOrderHistoryOnMicrositeDashboard(ModuleStoreTestCase):
         cart = Order.get_cart_for_user(self.user)
         CertificateItem.add_to_order(cart, course4_key, 20.0, 'verified')
         cart.purchase(first='FirstNameTesting123', street1='StreetTesting123')
-        self.orderid_certificate = cart.id
+        self.orderid_cert_non_microsite = cart.id
 
         # Fifth Order with course not attributed to any microsite but with a Donation
         course5 = CourseFactory.create(org='otherorg', number='999')
@@ -134,13 +134,13 @@ class TestOrderHistoryOnMicrositeDashboard(ModuleStoreTestCase):
         receipt_url_microsite_course = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_microsite})
         receipt_url_microsite_course2 = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_other_microsite})
         receipt_url_non_microsite = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_non_microsite})
-        receipt_url_certificate = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_certificate})
+        receipt_url_cert_non_microsite = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_cert_non_microsite})
         receipt_url_donation = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_donation})
 
         self.assertIn(receipt_url_microsite_course, response.content)
         self.assertNotIn(receipt_url_microsite_course2, response.content)
         self.assertNotIn(receipt_url_non_microsite, response.content)
-        self.assertNotIn(receipt_url_certificate, response.content)
+        self.assertNotIn(receipt_url_cert_non_microsite, response.content)
         self.assertNotIn(receipt_url_donation, response.content)
 
     @mock.patch("microsite_configuration.microsite.get_value", non_microsite)
@@ -151,11 +151,11 @@ class TestOrderHistoryOnMicrositeDashboard(ModuleStoreTestCase):
         receipt_url_microsite_course = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_microsite})
         receipt_url_microsite_course2 = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_other_microsite})
         receipt_url_non_microsite = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_non_microsite})
-        receipt_url_certificate = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_certificate})
+        receipt_url_cert_non_microsite = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_cert_non_microsite})
         receipt_url_donation = reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': self.orderid_donation})
 
         self.assertNotIn(receipt_url_microsite_course, response.content)
         self.assertNotIn(receipt_url_microsite_course2, response.content)
         self.assertIn(receipt_url_non_microsite, response.content)
-        self.assertNotIn(receipt_url_certificate, response.content)
-        self.assertNotIn(receipt_url_donation, response.content)
+        self.assertIn(receipt_url_cert_non_microsite, response.content)
+        self.assertIn(receipt_url_donation, response.content)

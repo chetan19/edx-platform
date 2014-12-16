@@ -3,7 +3,7 @@ API for for getting information about the user's shopping cart.
 """
 from django.core.urlresolvers import reverse
 from xmodule.modulestore.django import ModuleI18nService
-from shoppingcart.models import OrderItem, PaidCourseRegistration, CourseRegCodeItem
+from shoppingcart.models import OrderItem
 
 
 def order_history(user, **kwargs):
@@ -18,22 +18,18 @@ def order_history(user, **kwargs):
     org_filter_out_set = kwargs['org_filter_out_set'] if 'org_filter_out_set' in kwargs else []
 
     order_history_list = []
-    purchased_order_items = OrderItem.objects.filter(user=user, status='purchased').select_subclasses(
-        'paidcourseregistration', 'courseregcodeitem').order_by('-fulfilled_time')
+    purchased_order_items = OrderItem.objects.filter(user=user, status='purchased').select_subclasses().order_by('-fulfilled_time')
     for order_item in purchased_order_items:
-        # even though we are doing a select_subclasses, this doesn't filter
-        # out other OrderItem subclasses besides PaidCourseRegistration and CourseRegCodeItem
-        if isinstance(order_item, PaidCourseRegistration) or isinstance(order_item, CourseRegCodeItem):
-            # Avoid repeated entries for the same order id.
-            if order_item.order.id not in [item['order_id'] for item in order_history_list]:
-                # If we are in a Microsite, then include the orders having courses attributed (by ORG) to that Microsite.
-                # Conversely, if we are not in a Microsite, then include the orders having courses
-                # not attributed (by ORG) to any Microsite.
-                if (course_org_filter and course_org_filter == order_item.course_id.org) or \
-                        (course_org_filter is None and order_item.course_id.org not in org_filter_out_set):
-                    order_history_list.append({
-                        'order_id': order_item.order.id,
-                        'receipt_url': reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': order_item.order.id}),
-                        'order_date': ModuleI18nService().strftime(order_item.order.purchase_time, 'SHORT_DATE')
-                    })
+        # Avoid repeated entries for the same order id.
+        if order_item.order.id not in [item['order_id'] for item in order_history_list]:
+            # If we are in a Microsite, then include the orders having courses attributed (by ORG) to that Microsite.
+            # Conversely, if we are not in a Microsite, then include the orders having courses
+            # not attributed (by ORG) to any Microsite.
+            if (course_org_filter and course_org_filter == order_item.course_id.org) or \
+                    (course_org_filter is None and order_item.course_id.org not in org_filter_out_set):
+                order_history_list.append({
+                    'order_id': order_item.order.id,
+                    'receipt_url': reverse('shoppingcart.views.show_receipt', kwargs={'ordernum': order_item.order.id}),
+                    'order_date': ModuleI18nService().strftime(order_item.order.purchase_time, 'SHORT_DATE')
+                })
     return order_history_list
