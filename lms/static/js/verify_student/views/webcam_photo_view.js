@@ -262,6 +262,23 @@
             var success = this.backend.snapshot();
 
             if ( success ) {
+                // Track the user's image capture
+                window.analytics.track( 
+                    _.sprintf(
+                        'edx.bi.user.%(imageName)s_image.captured',
+                        {
+                            // In order to adhere to our period and underscore-separated naming
+                            // convention for business intelligence events, we need to extract the
+                            // name of the image (e.g., "face") from the camel-cased name of the
+                            // corresponding model attribute.
+                            imageName: this.modelAttribute.split("Image")[0]
+                        }
+                    ),
+                    {
+                        category: 'verification'
+                    }
+                );
+
                 // Hide the capture button, and show the reset button
                 $( "#webcam_capture_button", this.el ).hide();
                 $( "#webcam_reset_button", this.el ).show();

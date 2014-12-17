@@ -37,6 +37,11 @@ var edx = edx || {};
         },
 
         retakePhotos: function() {
+            // Track the user's intent to retake their photos
+            window.analytics.track( 'edx.bi.user.verification_images.retaken', {
+                category: 'verification'
+            });
+
             this.goToStep( 'face-photo-step' );
         },
 
