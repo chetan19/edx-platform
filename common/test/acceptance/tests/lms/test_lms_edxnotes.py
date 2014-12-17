@@ -461,6 +461,34 @@ class EdxNotesPageTest(UniqueCourseTest):
         self.assertIn(u"Recent Activity", self.notes_page.tabs)
         self.assertEqual(len(self.notes_page.children), 3)
 
+    def test_open_note_when_accessed_from_notes_page(self):
+        """
+        Scenario: Ensure that the link to the Unit opens a note only once.
+        Given I have a course with 2 sequentials that contain respectively one note and two notes
+        When I open Notes page
+        And I click on the first unit link
+        Then I see the note opened on the unit page
+        When I switch to the first sequential
+        I do not see any note opened
+        When I switch back to second sequential
+        I do not see any note opened
+        """
+        self._add_default_notes()
+        self.notes_page.visit()
+        item = self.notes_page.children[0]
+        item.go_to_unit()
+        self.courseware_page.wait_for_page()
+        note = self.note_unit_page.notes[0]
+        self.assertTrue(note.is_visible)
+        note = self.note_unit_page.notes[1]
+        self.assertFalse(note.is_visible)
+        self.course_nav.go_to_sequential_position(1)
+        note = self.note_unit_page.notes[0]
+        self.assertFalse(note.is_visible)
+        self.course_nav.go_to_sequential_position(2)
+        note = self.note_unit_page.notes[0]
+        self.assertFalse(note.is_visible)
+
 
 class EdxNotesToggleSingleNoteTest(EdxNotesTestMixin):
     """
