@@ -19,8 +19,11 @@ if Backbone?
     initialize: (options) ->
       super()
       @mode = options.mode or "inline"  # allowed values are "tab" or "inline"
+      @context = options.context or "course"  # allowed values are "course" or "standalone"
       if @mode not in ["tab", "inline"]
         throw new Error("invalid mode: " + @mode)
+
+      @readOnly = $(".discussion-module").data('read-only')
 
       # Quick fix to have an actual model when we're receiving new models from
       # the server.
@@ -50,7 +53,16 @@ if Backbone?
 
     renderTemplate: ->
       @template = _.template($("#thread-template").html())
-      @template(@model.toJSON())
+      container = $("#discussion-container")
+      if !container.length
+        # inline discussion
+        container = $(".discussion-module")
+      templateData = _.extend(
+        @model.toJSON(),
+        readOnly: @readOnly,
+        can_create_comment: container.data("user-create-comment")
+      )
+      @template(templateData)
 
     render: ->
       @$el.html(@renderTemplate())
@@ -79,7 +91,6 @@ if Backbone?
         @$('.comment-form').closest('li').toggle(not closed)
         @$(".action-vote").toggle(not closed)
         @$(".display-vote").toggle(closed)
-#        @$(".display-vote").toggle(closed)
         @renderAddResponseButton()
     })
 
@@ -119,6 +130,12 @@ if Backbone?
         @responsesRequest.abort()
 
     loadResponses: (responseLimit, elem, firstLoad) ->
+      # takeFocus take the page focus to response loading element while responses are being fetched.
+      # - When viewing in the Discussions tab, responses are loaded automatically, Do not scroll to the
+      # element(TNL-1530)
+      # - When viewing inline in courseware, user clicks 'expand' to open responses, Its ok to scroll to the
+      # element (Default)
+      takeFocus = if @mode == "tab" then false else true
       @responsesRequest = DiscussionUtil.safeAjax
         url: DiscussionUtil.urlFor('retrieve_single_thread', @model.get('commentable_id'), @model.id)
         data:
@@ -126,9 +143,9 @@ if Backbone?
           resp_limit: responseLimit if responseLimit
         $elem: elem
         $loading: elem
-        takeFocus: true
+        takeFocus: takeFocus
         complete: =>
-          @responseRequest = null
+          @responsesRequest = null
         success: (data, textStatus, xhr) =>
           Content.loadContentInfos(data['annotated_content_info'])
           if @isQuestion()
@@ -145,6 +162,7 @@ if Backbone?
           )
           @trigger "thread:responses:rendered"
           @loadedResponses = true
+          @$el.find('.discussion-article[data-id="' + @model.id + '"]').focus() # Sends focus to the discussion once the thread loads
         error: (xhr, textStatus) =>
           return if textStatus == 'abort'
 
@@ -288,6 +306,7 @@ if Backbone?
         container: @$('.thread-content-wrapper')
         model: @model
         mode: @mode
+        context: @context
         course_settings: @options.course_settings
       )
       @editView.bind "thread:updated thread:cancel_edit", @closeEditView

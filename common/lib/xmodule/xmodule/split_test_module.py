@@ -23,7 +23,8 @@ from xblock.fragment import Fragment
 
 log = logging.getLogger('edx.' + __name__)
 
-# Make '_' a no-op so we can scrape strings
+# Make '_' a no-op so we can scrape strings. Using lambda instead of
+#  `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
 
 DEFAULT_GROUP_NAME = _(u'Group ID {group_id}')
@@ -49,8 +50,10 @@ class SplitTestFields(object):
         # Add "No selection" value if there is not a valid selected user partition.
         if not selected_user_partition:
             SplitTestFields.user_partition_values.append(SplitTestFields.no_partition_selected)
-        for user_partition in all_user_partitions:
-            SplitTestFields.user_partition_values.append({"display_name": user_partition.name, "value": user_partition.id})
+        for user_partition in get_split_user_partitions(all_user_partitions):
+            SplitTestFields.user_partition_values.append(
+                {"display_name": user_partition.name, "value": user_partition.id}
+            )
         return SplitTestFields.user_partition_values
 
     display_name = String(
@@ -84,6 +87,14 @@ class SplitTestFields(object):
         help=_("Which child module students in a particular group_id should see"),
         scope=Scope.content
     )
+
+
+def get_split_user_partitions(user_partitions):
+    """
+    Helper method that filters a list of user_partitions and returns just the
+    ones that are suitable for the split_test module.
+    """
+    return [user_partition for user_partition in user_partitions if user_partition.scheme.name == "random"]
 
 
 @XBlock.needs('user_tags')  # pylint: disable=abstract-method
@@ -365,6 +376,8 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
 
     mako_template = "widgets/metadata-only-edit.html"
 
+    show_in_read_only_mode = True
+
     child_descriptor = module_attr('child_descriptor')
     log_child_render = module_attr('log_child_render')
     get_content_titles = module_attr('get_content_titles')
@@ -463,7 +476,8 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
         non_editable_fields = super(SplitTestDescriptor, self).non_editable_metadata_fields
         non_editable_fields.extend([
             SplitTestDescriptor.due,
-            SplitTestDescriptor.user_partitions
+            SplitTestDescriptor.user_partitions,
+            SplitTestDescriptor.group_id_to_child,
         ])
         return non_editable_fields
 
@@ -545,7 +559,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
         Returns a StudioValidation object describing the current state of the split_test_module
         (not including superclass validation messages).
         """
-        _ = self.runtime.service(self, "i18n").ugettext  # pylint: disable=redefined-outer-name
+        _ = self.runtime.service(self, "i18n").ugettext
         split_validation = StudioValidation(self.location)
         if self.user_partition_id < 0:
             split_validation.add(
@@ -566,23 +580,35 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
                     )
                 )
             else:
-                [active_children, inactive_children] = self.active_and_inactive_children()
-                if len(active_children) < len(user_partition.groups):
+                # If the user_partition selected is not valid for the split_test module, error.
+                # This can only happen via XML and import/export.
+                if not get_split_user_partitions([user_partition]):
                     split_validation.add(
                         StudioValidationMessage(
                             StudioValidationMessage.ERROR,
-                            _(u"The experiment does not contain all of the groups in the configuration."),
-                            action_runtime_event='add-missing-groups',
-                            action_label=_(u"Add Missing Groups")
+                            _(u"The experiment uses a group configuration that is not supported for experiments. "
+                              u"Select a valid group configuration or delete this experiment.")
                         )
                     )
-                if len(inactive_children) > 0:
-                    split_validation.add(
-                        StudioValidationMessage(
-                            StudioValidationMessage.WARNING,
-                            _(u"The experiment has an inactive group. Move content into active groups, then delete the inactive group.")
+                else:
+                    [active_children, inactive_children] = self.active_and_inactive_children()
+                    if len(active_children) < len(user_partition.groups):
+                        split_validation.add(
+                            StudioValidationMessage(
+                                StudioValidationMessage.ERROR,
+                                _(u"The experiment does not contain all of the groups in the configuration."),
+                                action_runtime_event='add-missing-groups',
+                                action_label=_(u"Add Missing Groups")
+                            )
                         )
-                    )
+                    if len(inactive_children) > 0:
+                        split_validation.add(
+                            StudioValidationMessage(
+                                StudioValidationMessage.WARNING,
+                                _(u"The experiment has an inactive group. "
+                                  u"Move content into active groups, then delete the inactive group.")
+                            )
+                        )
         return split_validation
 
     def general_validation_message(self, validation=None):
@@ -609,13 +635,17 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
 
         Called from Studio view.
         """
+        user_service = self.runtime.service(self, 'user')
+        if user_service is None:
+            return Response()
+
         user_partition = self.get_selected_partition()
 
         changed = False
         for group in user_partition.groups:
             str_group_id = unicode(group.id)
             if str_group_id not in self.group_id_to_child:
-                user_id = self.runtime.service(self, 'user').user_id
+                user_id = self.runtime.service(self, 'user').get_current_user().opt_attrs['edx-platform.user_id']
                 self._create_vertical_for_group(group, user_id)
                 changed = True
 

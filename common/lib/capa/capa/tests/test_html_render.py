@@ -27,8 +27,7 @@ class CapaHtmlRenderTest(unittest.TestCase):
 
         # Render the HTML
         etree.XML(problem.get_html())
-        # expect that we made it here without blowing up
-        self.assertTrue(True)
+        # TODO: This test should inspect the rendered html and assert one or more things about it
 
     def test_include_html(self):
         # Create a test file to include
@@ -125,7 +124,10 @@ class CapaHtmlRenderTest(unittest.TestCase):
         rendered_html = etree.XML(problem.get_html())
 
         # expect the javascript is still present in the rendered html
-        self.assertTrue("<script type=\"text/javascript\">function(){}</script>" in etree.tostring(rendered_html))
+        self.assertIn(
+            "<script type=\"text/javascript\">function(){}</script>",
+            etree.tostring(rendered_html)
+        )
 
     def test_render_response_xml(self):
         # Generate some XML for a string response

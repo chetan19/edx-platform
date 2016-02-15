@@ -1,8 +1,14 @@
+"""Tests for contents"""
+
+import os
 import unittest
 import ddt
+from path import Path as path
+
 from xmodule.contentstore.content import StaticContent, StaticContentStream
 from xmodule.contentstore.content import ContentStore
 from opaque_keys.edx.locations import SlashSeparatedCourseKey, AssetLocation
+from xmodule.static_content import _write_js, _list_descriptors
 
 SAMPLE_STRING = """
 This is a sample string with more than 1024 bytes, the default STREAM_DATA_CHUNK_SIZE
@@ -45,13 +51,16 @@ injected humour and the like).
 """
 
 
-class Content:
+class Content(object):
+    """
+    A class with location and content_type members
+    """
     def __init__(self, location, content_type):
         self.location = location
         self.content_type = content_type
 
 
-class FakeGridFsItem:
+class FakeGridFsItem(object):
     """
     This class provides the basic methods to get data from a GridFS item
     """
@@ -86,11 +95,6 @@ class ContentTest(unittest.TestCase):
         content = StaticContent('loc', 'name', 'content_type', 'data')
         self.assertIsNone(content.thumbnail_location)
 
-    def test_static_url_generation_from_courseid(self):
-        course_key = SlashSeparatedCourseKey('foo', 'bar', 'bz')
-        url = StaticContent.convert_legacy_static_url_with_course_id('images_course_image.jpg', course_key)
-        self.assertEqual(url, '/c4x/foo/bar/asset/images_course_image.jpg')
-
     @ddt.data(
         (u"monsters__.jpg", u"monsters__.jpg"),
         (u"monsters__.png", u"monsters__-png.jpg"),
@@ -114,9 +118,9 @@ class ContentTest(unittest.TestCase):
         self.assertEqual(AssetLocation(u'mitX', u'400', u'ignore', u'asset', u'subs__1eo_jXvZnE_.srt.sjson', None), asset_location)
 
     def test_get_location_from_path(self):
-        asset_location = StaticContent.get_location_from_path(u'/c4x/foo/bar/asset/images_course_image.jpg')
+        asset_location = StaticContent.get_location_from_path(u'/c4x/a/b/asset/images_course_image.jpg')
         self.assertEqual(
-            AssetLocation(u'foo', u'bar', None, u'asset', u'images_course_image.jpg', None),
+            AssetLocation(u'a', u'b', None, u'asset', u'images_course_image.jpg', None),
             asset_location
         )
 
@@ -155,3 +159,13 @@ class ContentTest(unittest.TestCase):
             total_length += len(chunck)
 
         self.assertEqual(total_length, last_byte - first_byte + 1)
+
+    def test_static_content_write_js(self):
+        """
+        Test that only one filename starts with 000.
+        """
+        output_root = path(u'common/static/xmodule/descriptors/js')
+        js_file_paths = _write_js(output_root, _list_descriptors())
+        js_file_paths = [file_path for file_path in js_file_paths if os.path.basename(file_path).startswith('000-')]
+        self.assertEqual(len(js_file_paths), 1)
+        self.assertIn("XModule.Descriptor = (function () {", open(js_file_paths[0]).read())

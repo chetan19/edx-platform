@@ -13,7 +13,7 @@ from django.utils.timezone import UTC
 from xmodule.xml_module import is_pointer_tag
 from opaque_keys.edx.locations import Location
 from xmodule.modulestore import only_xmodules
-from xmodule.modulestore.xml import ImportSystem, XMLModuleStore
+from xmodule.modulestore.xml import ImportSystem, XMLModuleStore, LibraryXMLModuleStore
 from xmodule.modulestore.inheritance import compute_inherited_metadata
 from xmodule.x_module import XModuleMixin
 from xmodule.fields import Date
@@ -33,20 +33,21 @@ COURSE = 'test_course'
 class DummySystem(ImportSystem):
 
     @patch('xmodule.modulestore.xml.OSFS', lambda dir: MemoryFS())
-    def __init__(self, load_error_modules):
+    def __init__(self, load_error_modules, library=False):
 
-        xmlstore = XMLModuleStore("data_dir", course_dirs=[], load_error_modules=load_error_modules)
+        if library:
+            xmlstore = LibraryXMLModuleStore("data_dir", source_dirs=[], load_error_modules=load_error_modules)
+        else:
+            xmlstore = XMLModuleStore("data_dir", source_dirs=[], load_error_modules=load_error_modules)
         course_id = SlashSeparatedCourseKey(ORG, COURSE, 'test_run')
         course_dir = "test_dir"
         error_tracker = Mock()
-        parent_tracker = Mock()
 
         super(DummySystem, self).__init__(
             xmlstore=xmlstore,
             course_id=course_id,
             course_dir=course_dir,
             error_tracker=error_tracker,
-            parent_tracker=parent_tracker,
             load_error_modules=load_error_modules,
             mixins=(InheritanceMixin, XModuleMixin),
             field_data=KvsFieldData(DictKeyValueStore()),
@@ -59,17 +60,17 @@ class DummySystem(ImportSystem):
 class BaseCourseTestCase(unittest.TestCase):
     '''Make sure module imports work properly, including for malformed inputs'''
     @staticmethod
-    def get_system(load_error_modules=True):
+    def get_system(load_error_modules=True, library=False):
         '''Get a dummy system'''
-        return DummySystem(load_error_modules)
+        return DummySystem(load_error_modules, library=library)
 
     def get_course(self, name):
         """Get a test course by directory name.  If there's more than one, error."""
-        print("Importing {0}".format(name))
+        print "Importing {0}".format(name)
 
         modulestore = XMLModuleStore(
             DATA_DIR,
-            course_dirs=[name],
+            source_dirs=[name],
             xblock_mixins=(InheritanceMixin,),
             xblock_select=only_xmodules,
         )
@@ -188,34 +189,20 @@ class ImportTestCase(BaseCourseTestCase):
         # Now make sure the exported xml is a sequential
         self.assertEqual(node.tag, 'sequential')
 
-    def test_metadata_import_export(self):
-        """Two checks:
-            - unknown metadata is preserved across import-export
-            - inherited metadata doesn't leak to children.
+    def course_descriptor_inheritance_check(self, descriptor, from_date_string, unicorn_color, url_name):
         """
-        system = self.get_system()
-        v = 'March 20 17:00'
-        url_name = 'test1'
-        start_xml = '''
-        <course org="{org}" course="{course}"
-                due="{due}" url_name="{url_name}" unicorn="purple">
-            <chapter url="hi" url_name="ch" display_name="CH">
-                <html url_name="h" display_name="H">Two houses, ...</html>
-            </chapter>
-        </course>'''.format(due=v, org=ORG, course=COURSE, url_name=url_name)
-        descriptor = system.process_xml(start_xml)
-        compute_inherited_metadata(descriptor)
-
+        Checks to make sure that metadata inheritance on a course descriptor is respected.
+        """
         # pylint: disable=protected-access
         print(descriptor, descriptor._field_data)
-        self.assertEqual(descriptor.due, ImportTestCase.date.from_json(v))
+        self.assertEqual(descriptor.due, ImportTestCase.date.from_json(from_date_string))
 
         # Check that the child inherits due correctly
         child = descriptor.get_children()[0]
-        self.assertEqual(child.due, ImportTestCase.date.from_json(v))
+        self.assertEqual(child.due, ImportTestCase.date.from_json(from_date_string))
         # need to convert v to canonical json b4 comparing
         self.assertEqual(
-            ImportTestCase.date.to_json(ImportTestCase.date.from_json(v)),
+            ImportTestCase.date.to_json(ImportTestCase.date.from_json(from_date_string)),
             child.xblock_kvs.inherited_settings['due']
         )
 
@@ -235,25 +222,81 @@ class ImportTestCase(BaseCourseTestCase):
         with descriptor.runtime.export_fs.open('course/{url_name}.xml'.format(url_name=url_name)) as f:
             course_xml = etree.fromstring(f.read())
 
-        self.assertEqual(course_xml.attrib['unicorn'], 'purple')
+        self.assertEqual(course_xml.attrib['unicorn'], unicorn_color)
 
         # the course and org tags should be _only_ in the pointer
-        self.assertTrue('course' not in course_xml.attrib)
-        self.assertTrue('org' not in course_xml.attrib)
+        self.assertNotIn('course', course_xml.attrib)
+        self.assertNotIn('org', course_xml.attrib)
 
         # did we successfully strip the url_name from the definition contents?
-        self.assertTrue('url_name' not in course_xml.attrib)
+        self.assertNotIn('url_name', course_xml.attrib)
 
         # Does the chapter tag now have a due attribute?
         # hardcoded path to child
         with descriptor.runtime.export_fs.open('chapter/ch.xml') as f:
             chapter_xml = etree.fromstring(f.read())
         self.assertEqual(chapter_xml.tag, 'chapter')
-        self.assertFalse('due' in chapter_xml.attrib)
+        self.assertNotIn('due', chapter_xml.attrib)
+
+    def test_metadata_import_export(self):
+        """Two checks:
+            - unknown metadata is preserved across import-export
+            - inherited metadata doesn't leak to children.
+        """
+        system = self.get_system()
+        from_date_string = 'March 20 17:00'
+        url_name = 'test1'
+        unicorn_color = 'purple'
+        start_xml = '''
+        <course org="{org}" course="{course}"
+                due="{due}" url_name="{url_name}" unicorn="{unicorn_color}">
+            <chapter url="hi" url_name="ch" display_name="CH">
+                <html url_name="h" display_name="H">Two houses, ...</html>
+            </chapter>
+        </course>'''.format(
+            due=from_date_string, org=ORG, course=COURSE, url_name=url_name, unicorn_color=unicorn_color
+        )
+        descriptor = system.process_xml(start_xml)
+        compute_inherited_metadata(descriptor)
+        self.course_descriptor_inheritance_check(descriptor, from_date_string, unicorn_color, url_name)
+
+    def test_library_metadata_import_export(self):
+        """Two checks:
+            - unknown metadata is preserved across import-export
+            - inherited metadata doesn't leak to children.
+        """
+        system = self.get_system(library=True)
+        from_date_string = 'March 26 17:00'
+        url_name = 'test2'
+        unicorn_color = 'rainbow'
+        start_xml = '''
+        <library org="TestOrg" library="TestLib" display_name="stuff">
+            <course org="{org}" course="{course}"
+                due="{due}" url_name="{url_name}" unicorn="{unicorn_color}">
+                <chapter url="hi" url_name="ch" display_name="CH">
+                    <html url_name="h" display_name="H">Two houses, ...</html>
+                </chapter>
+            </course>
+        </library>'''.format(
+            due=from_date_string, org=ORG, course=COURSE, url_name=url_name, unicorn_color=unicorn_color
+        )
+        descriptor = system.process_xml(start_xml)
+
+        # pylint: disable=protected-access
+        original_unwrapped = descriptor._unwrapped_field_data
+        LibraryXMLModuleStore.patch_descriptor_kvs(descriptor)
+        # '_unwrapped_field_data' is reset in `patch_descriptor_kvs`
+        # pylint: disable=protected-access
+        self.assertIsNot(original_unwrapped, descriptor._unwrapped_field_data)
+        compute_inherited_metadata(descriptor)
+        # Check the course module, since it has inheritance
+        descriptor = descriptor.get_children()[0]
+        self.course_descriptor_inheritance_check(descriptor, from_date_string, unicorn_color, url_name)
 
     def test_metadata_no_inheritance(self):
         """
-        Checks that default value of None (for due) does not get marked as inherited.
+        Checks that default value of None (for due) does not get marked as inherited when a
+        course is the root block.
         """
         system = self.get_system()
         url_name = 'test1'
@@ -266,7 +309,35 @@ class ImportTestCase(BaseCourseTestCase):
         </course>'''.format(org=ORG, course=COURSE, url_name=url_name)
         descriptor = system.process_xml(start_xml)
         compute_inherited_metadata(descriptor)
+        self.course_descriptor_no_inheritance_check(descriptor)
 
+    def test_library_metadata_no_inheritance(self):
+        """
+        Checks that the default value of None (for due) does not get marked as inherited when a
+        library is the root block.
+        """
+        system = self.get_system()
+        url_name = 'test1'
+        start_xml = '''
+        <library org="TestOrg" library="TestLib" display_name="stuff">
+            <course org="{org}" course="{course}"
+                    url_name="{url_name}" unicorn="purple">
+                <chapter url="hi" url_name="ch" display_name="CH">
+                    <html url_name="h" display_name="H">Two houses, ...</html>
+                </chapter>
+            </course>
+        </library>'''.format(org=ORG, course=COURSE, url_name=url_name)
+        descriptor = system.process_xml(start_xml)
+        LibraryXMLModuleStore.patch_descriptor_kvs(descriptor)
+        compute_inherited_metadata(descriptor)
+        # Run the checks on the course node instead.
+        descriptor = descriptor.get_children()[0]
+        self.course_descriptor_no_inheritance_check(descriptor)
+
+    def course_descriptor_no_inheritance_check(self, descriptor):
+        """
+        Verifies that a default value of None (for due) does not get marked as inherited.
+        """
         self.assertEqual(descriptor.due, None)
 
         # Check that the child does not inherit a value for due
@@ -279,9 +350,21 @@ class ImportTestCase(BaseCourseTestCase):
             child.start
         )
 
+    def override_metadata_check(self, descriptor, child, course_due, child_due):
+        """
+        Verifies that due date can be overriden at child level.
+        """
+        self.assertEqual(descriptor.due, ImportTestCase.date.from_json(course_due))
+        self.assertEqual(child.due, ImportTestCase.date.from_json(child_due))
+        # Test inherited metadata. Due does not appear here (because explicitly set on child).
+        self.assertEqual(
+            ImportTestCase.date.to_json(ImportTestCase.date.from_json(course_due)),
+            child.xblock_kvs.inherited_settings['due']
+        )
+
     def test_metadata_override_default(self):
         """
-        Checks that due date can be overriden at child level.
+        Checks that due date can be overriden at child level when a course is the root.
         """
         system = self.get_system()
         course_due = 'March 20 17:00'
@@ -299,14 +382,34 @@ class ImportTestCase(BaseCourseTestCase):
         # pylint: disable=protected-access
         child._field_data.set(child, 'due', child_due)
         compute_inherited_metadata(descriptor)
+        self.override_metadata_check(descriptor, child, course_due, child_due)
 
-        self.assertEqual(descriptor.due, ImportTestCase.date.from_json(course_due))
-        self.assertEqual(child.due, ImportTestCase.date.from_json(child_due))
-        # Test inherited metadata. Due does not appear here (because explicitly set on child).
-        self.assertEqual(
-            ImportTestCase.date.to_json(ImportTestCase.date.from_json(course_due)),
-            child.xblock_kvs.inherited_settings['due']
-        )
+    def test_library_metadata_override_default(self):
+        """
+        Checks that due date can be overriden at child level when a library is the root.
+        """
+        system = self.get_system()
+        course_due = 'March 20 17:00'
+        child_due = 'April 10 00:00'
+        url_name = 'test1'
+        start_xml = '''
+        <library org="TestOrg" library="TestLib" display_name="stuff">
+            <course org="{org}" course="{course}"
+                    due="{due}" url_name="{url_name}" unicorn="purple">
+                <chapter url="hi" url_name="ch" display_name="CH">
+                    <html url_name="h" display_name="H">Two houses, ...</html>
+                </chapter>
+            </course>
+        </library>'''.format(due=course_due, org=ORG, course=COURSE, url_name=url_name)
+        descriptor = system.process_xml(start_xml)
+        LibraryXMLModuleStore.patch_descriptor_kvs(descriptor)
+        # Chapter is two levels down here.
+        child = descriptor.get_children()[0].get_children()[0]
+        # pylint: disable=protected-access
+        child._field_data.set(child, 'due', child_due)
+        compute_inherited_metadata(descriptor)
+        descriptor = descriptor.get_children()[0]
+        self.override_metadata_check(descriptor, child, course_due, child_due)
 
     def test_is_pointer_tag(self):
         """
@@ -328,22 +431,22 @@ class ImportTestCase(BaseCourseTestCase):
               """]
 
         for xml_str in yes:
-            print("should be True for {0}".format(xml_str))
+            print "should be True for {0}".format(xml_str)
             self.assertTrue(is_pointer_tag(etree.fromstring(xml_str)))
 
         for xml_str in no:
-            print("should be False for {0}".format(xml_str))
+            print "should be False for {0}".format(xml_str)
             self.assertFalse(is_pointer_tag(etree.fromstring(xml_str)))
 
     def test_metadata_inherit(self):
         """Make sure that metadata is inherited properly"""
 
-        print("Starting import")
+        print "Starting import"
         course = self.get_course('toy')
 
         def check_for_key(key, node, value):
             "recursive check for presence of key"
-            print("Checking {0}".format(node.location.to_deprecated_string()))
+            print "Checking {0}".format(node.location.to_deprecated_string())
             self.assertEqual(getattr(node, key), value)
             for c in node.get_children():
                 check_for_key(key, c, value)
@@ -381,7 +484,7 @@ class ImportTestCase(BaseCourseTestCase):
         happen--locations should uniquely name definitions.  But in
         our imperfect XML world, it can (and likely will) happen."""
 
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['toy', 'two_toys'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['toy', 'two_toys'])
 
         location = Location("edX", "toy", "2012_Fall", "video", "Welcome", None)
         toy_video = modulestore.get_item(location)
@@ -393,17 +496,17 @@ class ImportTestCase(BaseCourseTestCase):
     def test_colon_in_url_name(self):
         """Ensure that colons in url_names convert to file paths properly"""
 
-        print("Starting import")
+        print "Starting import"
         # Not using get_courses because we need the modulestore object too afterward
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['toy'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['toy'])
         courses = modulestore.get_courses()
         self.assertEquals(len(courses), 1)
         course = courses[0]
 
-        print("course errors:")
+        print "course errors:"
         for (msg, err) in modulestore.get_course_errors(course.id):
-            print(msg)
-            print(err)
+            print msg
+            print err
 
         chapters = course.get_children()
         self.assertEquals(len(chapters), 5)
@@ -411,12 +514,12 @@ class ImportTestCase(BaseCourseTestCase):
         ch2 = chapters[1]
         self.assertEquals(ch2.url_name, "secret:magic")
 
-        print("Ch2 location: ", ch2.location)
+        print "Ch2 location: ", ch2.location
 
         also_ch2 = modulestore.get_item(ch2.location)
         self.assertEquals(ch2, also_ch2)
 
-        print("making sure html loaded")
+        print "making sure html loaded"
         loc = course.id.make_usage_key('html', 'secret:toylab')
         html = modulestore.get_item(loc)
         self.assertEquals(html.display_name, "Toy lab")
@@ -428,13 +531,13 @@ class ImportTestCase(BaseCourseTestCase):
         loaded because of unicode filenames, there are appropriate
         exceptions/errors to that effect."""
 
-        print("Starting import")
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['test_unicode'])
+        print "Starting import"
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['test_unicode'])
         courses = modulestore.get_courses()
         self.assertEquals(len(courses), 1)
         course = courses[0]
 
-        print("course errors:")
+        print "course errors:"
 
         # Expect to find an error/exception about characters in "®esources"
         expect = "InvalidKeyError"
@@ -456,7 +559,7 @@ class ImportTestCase(BaseCourseTestCase):
         Make sure that url_names are only mangled once.
         """
 
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['toy'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['toy'])
 
         toy_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
 
@@ -470,12 +573,12 @@ class ImportTestCase(BaseCourseTestCase):
         for i in (2, 3):
             video = sections[i]
             # Name should be 'video_{hash}'
-            print("video {0} url_name: {1}".format(i, video.url_name))
+            print "video {0} url_name: {1}".format(i, video.url_name)
 
             self.assertEqual(len(video.url_name), len('video_') + 12)
 
     def test_poll_and_conditional_import(self):
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['conditional_and_poll'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['conditional_and_poll'])
 
         course = modulestore.get_courses()[0]
         chapters = course.get_children()
@@ -511,24 +614,8 @@ class ImportTestCase(BaseCourseTestCase):
 
         self.assertRaises(etree.XMLSyntaxError, system.process_xml, bad_xml)
 
-    def test_graphicslidertool_import(self):
-        '''
-        Check to see if definition_from_xml in gst_module.py
-        works properly.  Pulls data from the graphic_slider_tool directory
-        in the test data directory.
-        '''
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['graphic_slider_tool'])
-
-        sa_id = SlashSeparatedCourseKey("edX", "gst_test", "2012_Fall")
-        location = sa_id.make_usage_key("graphical_slider_tool", "sample_gst")
-        gst_sample = modulestore.get_item(location)
-        render_string_from_sample_gst_xml = """
-        <slider var="a" style="width:400px;float:left;"/>\
-<plot style="margin-top:15px;margin-bottom:15px;"/>""".strip()
-        self.assertIn(render_string_from_sample_gst_xml, gst_sample.data)
-
     def test_word_cloud_import(self):
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['word_cloud'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['word_cloud'])
 
         course = modulestore.get_courses()[0]
         chapters = course.get_children()
@@ -546,8 +633,11 @@ class ImportTestCase(BaseCourseTestCase):
     def test_cohort_config(self):
         """
         Check that cohort config parsing works right.
+
+        Note: The cohort config on the CourseModule is no longer used.
+        See openedx.core.djangoapps.course_groups.models.CourseCohortSettings.
         """
-        modulestore = XMLModuleStore(DATA_DIR, course_dirs=['toy'])
+        modulestore = XMLModuleStore(DATA_DIR, source_dirs=['toy'])
 
         toy_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
 

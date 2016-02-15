@@ -37,15 +37,8 @@ class MultipleCouponsNotAllowedException(InvalidCartItem):
     pass
 
 
-class RegCodeAlreadyExistException(InvalidCartItem):
-    pass
-
-
-class ItemNotAllowedToRedeemRegCodeException(InvalidCartItem):
-    pass
-
-
-class ItemDoesNotExistAgainstRegCodeException(InvalidCartItem):
+class RedemptionCodeError(Exception):
+    """An error occurs while processing redemption codes. """
     pass
 
 
@@ -62,4 +55,8 @@ class InvalidStatusToRetire(Exception):
 
 
 class UnexpectedOrderItemStatus(Exception):
+    pass
+
+
+class ItemNotFoundInCartException(Exception):
     pass

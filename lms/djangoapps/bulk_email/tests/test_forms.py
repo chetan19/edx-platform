@@ -3,14 +3,12 @@
 Unit tests for bulk-email-related forms.
 """
 from django.conf import settings
-from django.test.utils import override_settings
 from mock import patch
+from nose.plugins.attrib import attr
 
 from bulk_email.models import CourseAuthorization, CourseEmailTemplate
 from bulk_email.forms import CourseAuthorizationAdminForm, CourseEmailTemplateForm
-from xmodule.modulestore.tests.django_utils import (
-    TEST_DATA_MOCK_MODULESTORE, TEST_DATA_MIXED_TOY_MODULESTORE
-)
+from xmodule.modulestore.tests.django_utils import TEST_DATA_MIXED_TOY_MODULESTORE
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
@@ -18,19 +16,14 @@ from xmodule.modulestore.django import modulestore
 from xmodule.modulestore import ModuleStoreEnum
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
+@attr('shard_1')
 class CourseAuthorizationFormTest(ModuleStoreTestCase):
     """Test the CourseAuthorizationAdminForm form for Mongo-backed courses."""
 
     def setUp(self):
+        super(CourseAuthorizationFormTest, self).setUp()
         course_title = u"ẗëṡẗ title ｲ乇丂ｲ ﾶ乇丂丂ﾑg乇 ｷo尺 ﾑﾚﾚ тэѕт мэѕѕаБэ"
         self.course = CourseFactory.create(display_name=course_title)
-
-    def tearDown(self):
-        """
-        Undo all patches.
-        """
-        patch.stopall()
 
     @patch.dict(settings.FEATURES, {'ENABLE_INSTRUCTOR_EMAIL': True, 'REQUIRE_COURSE_EMAIL_AUTH': True})
     def test_authorize_mongo_course(self):
@@ -67,7 +60,10 @@ class CourseAuthorizationFormTest(ModuleStoreTestCase):
             "Course authorization with this Course id already exists.",
             form._errors['course_id'][0]  # pylint: disable=protected-access
         )
-        with self.assertRaisesRegexp(ValueError, "The CourseAuthorization could not be created because the data didn't validate."):
+        with self.assertRaisesRegexp(
+            ValueError,
+            "The CourseAuthorization could not be created because the data didn't validate."
+        ):
             form.save()
 
         # Course should still be authorized (invalid attempt had no effect)
@@ -88,7 +84,10 @@ class CourseAuthorizationFormTest(ModuleStoreTestCase):
         msg += 'Please recheck that you have supplied a valid course id.'
         self.assertEquals(msg, form._errors['course_id'][0])  # pylint: disable=protected-access
 
-        with self.assertRaisesRegexp(ValueError, "The CourseAuthorization could not be created because the data didn't validate."):
+        with self.assertRaisesRegexp(
+            ValueError,
+            "The CourseAuthorization could not be created because the data didn't validate."
+        ):
             form.save()
 
     @patch.dict(settings.FEATURES, {'ENABLE_INSTRUCTOR_EMAIL': True, 'REQUIRE_COURSE_EMAIL_AUTH': True})
@@ -103,7 +102,10 @@ class CourseAuthorizationFormTest(ModuleStoreTestCase):
         msg += 'Please recheck that you have supplied a valid course id.'
         self.assertEquals(msg, form._errors['course_id'][0])  # pylint: disable=protected-access
 
-        with self.assertRaisesRegexp(ValueError, "The CourseAuthorization could not be created because the data didn't validate."):
+        with self.assertRaisesRegexp(
+            ValueError,
+            "The CourseAuthorization could not be created because the data didn't validate."
+        ):
             form.save()
 
     @patch.dict(settings.FEATURES, {'ENABLE_INSTRUCTOR_EMAIL': True, 'REQUIRE_COURSE_EMAIL_AUTH': True})
@@ -114,17 +116,20 @@ class CourseAuthorizationFormTest(ModuleStoreTestCase):
         # Validation shouldn't work
         self.assertFalse(form.is_valid())
 
-        error_msg = form._errors['course_id'][0]
+        error_msg = form._errors['course_id'][0]  # pylint: disable=protected-access
         self.assertIn(u'--- Entered course id was: "{0}". '.format(self.course.id.run), error_msg)
         self.assertIn(u'Please recheck that you have supplied a valid course id.', error_msg)
 
-        with self.assertRaisesRegexp(ValueError, "The CourseAuthorization could not be created because the data didn't validate."):
+        with self.assertRaisesRegexp(
+            ValueError,
+            "The CourseAuthorization could not be created because the data didn't validate."
+        ):
             form.save()
 
 
-@override_settings(MODULESTORE=TEST_DATA_MIXED_TOY_MODULESTORE)
 class CourseAuthorizationXMLFormTest(ModuleStoreTestCase):
     """Check that XML courses cannot be authorized for email."""
+    MODULESTORE = TEST_DATA_MIXED_TOY_MODULESTORE
 
     @patch.dict(settings.FEATURES, {'ENABLE_INSTRUCTOR_EMAIL': True, 'REQUIRE_COURSE_EMAIL_AUTH': True})
     def test_xml_course_authorization(self):
@@ -141,11 +146,13 @@ class CourseAuthorizationXMLFormTest(ModuleStoreTestCase):
         msg += u'"{0}" appears to be an XML backed course.'.format(course_id.to_deprecated_string())
         self.assertEquals(msg, form._errors['course_id'][0])  # pylint: disable=protected-access
 
-        with self.assertRaisesRegexp(ValueError, "The CourseAuthorization could not be created because the data didn't validate."):
+        with self.assertRaisesRegexp(
+            ValueError,
+            "The CourseAuthorization could not be created because the data didn't validate."
+        ):
             form.save()
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
 class CourseEmailTemplateFormTest(ModuleStoreTestCase):
     """Test the CourseEmailTemplateForm that is used in the Django admin subsystem."""
 

@@ -16,7 +16,9 @@ import time
 import traceback
 
 from django.core.management.base import NoArgsCommand
-from django.db import connection
+from django.db import transaction
+from django.db.models import Max
+from courseware.models import StudentModuleHistory
 
 
 class Command(NoArgsCommand):
@@ -72,20 +74,21 @@ class StudentModuleHistoryCleaner(object):
 
         batch_size = batch_size or self.BATCH_SIZE
 
-        connection.enter_transaction_management()
-
         self.last_student_module_id = self.get_last_student_module_id()
         self.load_state()
 
         while self.next_student_module_id <= self.last_student_module_id:
-            for smid in self.module_ids_to_check(batch_size):
-                try:
-                    self.clean_one_student_module(smid)
-                except Exception:       # pylint: disable=broad-except
-                    trace = traceback.format_exc()
-                    self.say("Couldn't clean student_module_id {}:\n{}".format(smid, trace))
-            if not self.dry_run:
-                self.commit()
+            with transaction.atomic():
+                for smid in self.module_ids_to_check(batch_size):
+                    try:
+                        self.clean_one_student_module(smid)
+                    except Exception:       # pylint: disable=broad-except
+                        trace = traceback.format_exc()
+                        self.say("Couldn't clean student_module_id {}:\n{}".format(smid, trace))
+                if self.dry_run:
+                    transaction.set_rollback(True)
+                else:
+                    self.say("Committing")
             self.save_state()
             if sleep:
                 time.sleep(sleep)
@@ -98,13 +101,6 @@ class StudentModuleHistoryCleaner(object):
 
         """
         print message
-
-    def commit(self):
-        """
-        Commit the transaction.
-        """
-        self.say("Committing")
-        connection.commit()
 
     def load_state(self):
         """
@@ -140,11 +136,8 @@ class StudentModuleHistoryCleaner(object):
         """
         Return the id of the last student_module.
         """
-        cursor = connection.cursor()
-        cursor.execute("""
-            SELECT max(student_module_id) FROM courseware_studentmodulehistory
-            """)
-        last = cursor.fetchone()[0]
+        last = StudentModuleHistory.objects.all() \
+            .aggregate(Max('student_module'))['student_module__max']
         self.say("Last student_module_id is {}".format(last))
         return last
 
@@ -176,17 +169,11 @@ class StudentModuleHistoryCleaner(object):
         Return a list: [(id, created), ...], all the rows of history.
 
         """
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            SELECT id, created FROM courseware_studentmodulehistory
-            WHERE student_module_id = %s
-            ORDER BY created, id
-            """,
-            [student_module_id]
-        )
-        history = cursor.fetchall()
-        return history
+        history = StudentModuleHistory.objects \
+            .filter(student_module=student_module_id) \
+            .order_by('created', 'id')
+
+        return [(row.id, row.created) for row in history]
 
     def delete_history(self, ids_to_delete):
         """
@@ -196,13 +183,7 @@ class StudentModuleHistoryCleaner(object):
 
         """
         assert ids_to_delete
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            DELETE FROM courseware_studentmodulehistory
-            WHERE id IN ({ids})
-            """.format(ids=",".join(str(i) for i in ids_to_delete))
-        )
+        StudentModuleHistory.objects.filter(id__in=ids_to_delete).delete()
 
     def clean_one_student_module(self, student_module_id):
         """Clean one StudentModule's-worth of history.

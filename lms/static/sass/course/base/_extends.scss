@@ -1,3 +1,14 @@
+// lms - course - extends
+// ====================
+
+// lms inner wrapper
+%inner-wrapper {
+  margin: 0 auto;
+  max-width: 1180px;
+  width: flex-grid(12);
+}
+
+// Older Course Extends - to review/remove with LMS cleanup
 h1.top-header {
   border-bottom: 1px solid $border-color-2;
   @include text-align(left);
@@ -17,7 +28,7 @@ h1.top-header {
 
 .light-button, a.light-button, // only used in askbot as classes
 .gray-button {
-  @include button(simple, #eee);
+  @include button(simple, $gray-l5);
   @extend .button-reset;
   font-size: em(13);
 }
@@ -87,7 +98,7 @@ h1.top-header {
   h3 {
     background: none;
     border: none;
-    color: #000;
+    color: $black;
     font-weight: normal;
     margin: 0;
     overflow: hidden;
@@ -101,11 +112,11 @@ h1.top-header {
 
     &.active {
       // @extend .bottom-border;
-      color: #000;
+      color: $black;
       font-weight: bold;
 
       a {
-        color: #000;
+        color: $black;
       }
     }
   }
@@ -127,11 +138,11 @@ h1.top-header {
         line-height: lh();
         font-size: 1em;
         @include box-sizing(border-box);
-        padding: lh(.25) lh(.5) lh(.25) 0;
+        padding: lh(.25) lh(0.5) lh(.25) 0;
 
         &:hover, &:focus {
           color: #666;
-          background: #f6f6f6;
+          background: $gray-l6;
         }
       }
     }
@@ -141,7 +152,7 @@ h1.top-header {
     position: relative;
 
     a {
-      background: #f6f6f6 url('../images/slide-left-icon.png') center center no-repeat;
+      background: #f6f6f6 url('#{$static-path}/images/slide-left-icon.png') center center no-repeat;
       border: 1px solid #D3D3D3;
       border-radius: 3px 0 0 3px;
       height: 16px;
@@ -188,3 +199,24 @@ h1.top-header {
   @include transition( all .2s $ease-in-out-quad 0s);
 }
 
+// FontAwesome rtl chevron next
+.fa-chevron-next {
+  &:before {
+    @if $bi-app-direction == ltr {
+        content: "\f054"; // .fa-chevron-right
+    } @else if $bi-app-direction == rtl {
+        content: "\f053"; // .fa-chevron-left
+    }
+  }
+}
+
+// FontAwesome rtl chevron prev
+.fa-chevron-prev {
+  &:before {
+    @if $bi-app-direction == ltr {
+        content: "\f053"; // .fa-chevron-left
+    } @else if $bi-app-direction == rtl {
+        content: "\f054"; // .fa-chevron-right
+    }
+  }
+}

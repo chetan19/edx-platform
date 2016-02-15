@@ -64,6 +64,9 @@ class LTI20ModuleMixin(object):
         if self.system.debug:
             self._log_correct_authorization_header(request)
 
+        if not self.accept_grades_past_due and self.is_past_due():
+            return Response(status=404)  # have to do 404 due to spec, but 400 is better, with error msg in body
+
         try:
             anon_id = self.parse_lti_2_0_handler_suffix(suffix)
         except LTIError:
@@ -102,7 +105,7 @@ class LTI20ModuleMixin(object):
         """
         sha1 = hashlib.sha1()
         sha1.update(request.body)
-        oauth_body_hash = unicode(base64.b64encode(sha1.digest()))  # pylint: disable=too-many-function-args
+        oauth_body_hash = unicode(base64.b64encode(sha1.digest()))
         log.debug("[LTI] oauth_body_hash = {}".format(oauth_body_hash))
         client_key, client_secret = self.get_client_key_secret()
         client = Client(client_key, client_secret)
@@ -318,8 +321,8 @@ class LTI20ModuleMixin(object):
 
         # the standard supports a list of objects, who knows why. It must contain at least 1 element, and the
         # first element must be a dict
-        if type(json_obj) != dict:
-            if type(json_obj) == list and len(json_obj) >= 1 and type(json_obj[0]) == dict:
+        if not isinstance(json_obj, dict):
+            if isinstance(json_obj, list) and len(json_obj) >= 1 and isinstance(json_obj[0], dict):
                 json_obj = json_obj[0]
             else:
                 msg = ("Supplied JSON string is a list that does not contain an object as the first element. {}"

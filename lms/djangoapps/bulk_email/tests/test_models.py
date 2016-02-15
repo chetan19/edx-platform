@@ -7,12 +7,15 @@ from django.conf import settings
 
 from student.tests.factories import UserFactory
 
-from mock import patch
+from mock import patch, Mock
+from nose.plugins.attrib import attr
 
 from bulk_email.models import CourseEmail, SEND_TO_STAFF, CourseEmailTemplate, CourseAuthorization
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 
 
+@attr('shard_1')
+@patch('bulk_email.models.html_to_text', Mock(return_value='Mocking CourseEmail.text_message', autospec=True))
 class CourseEmailTest(TestCase):
     """Test the CourseEmail model."""
 
@@ -37,7 +40,9 @@ class CourseEmailTest(TestCase):
         html_message = "<html>dummy message</html>"
         template_name = "branded_template"
         from_addr = "branded@branding.com"
-        email = CourseEmail.create(course_id, sender, to_option, subject, html_message, template_name=template_name, from_addr=from_addr)
+        email = CourseEmail.create(
+            course_id, sender, to_option, subject, html_message, template_name=template_name, from_addr=from_addr
+        )
         self.assertEquals(email.course_id, course_id)
         self.assertEquals(email.to_option, SEND_TO_STAFF)
         self.assertEquals(email.subject, subject)
@@ -56,6 +61,7 @@ class CourseEmailTest(TestCase):
             CourseEmail.create(course_id, sender, to_option, subject, html_message)
 
 
+@attr('shard_1')
 class NoCourseEmailTemplateTest(TestCase):
     """Test the CourseEmailTemplate model without loading the template data."""
 
@@ -64,10 +70,13 @@ class NoCourseEmailTemplateTest(TestCase):
             CourseEmailTemplate.get_template()
 
 
+@attr('shard_1')
 class CourseEmailTemplateTest(TestCase):
     """Test the CourseEmailTemplate model."""
 
     def setUp(self):
+        super(CourseEmailTemplateTest, self).setUp()
+
         # load initial content (since we don't run migrations as part of tests):
         call_command("loaddata", "course_email_template.json")
 
@@ -76,7 +85,7 @@ class CourseEmailTemplateTest(TestCase):
         context = {
             'course_title': "Bogus Course Title",
             'course_url': "/location/of/course/url",
-            'account_settings_url': "/location/of/account/settings/url",
+            'email_settings_url': "/location/of/email/settings/url",
             'platform_name': 'edX',
             'email': 'your-email@test.com',
         }
@@ -131,6 +140,7 @@ class CourseEmailTemplateTest(TestCase):
         template.render_plaintext("My new plain text.", context)
 
 
+@attr('shard_1')
 class CourseAuthorizationTest(TestCase):
     """Test the CourseAuthorization model."""
 

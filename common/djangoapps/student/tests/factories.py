@@ -2,7 +2,7 @@
 from student.models import (User, UserProfile, Registration,
                             CourseEnrollmentAllowed, CourseEnrollment,
                             PendingEmailChange, UserStanding,
-                            )
+                            CourseAccessRole)
 from course_modes.models import CourseMode
 from django.contrib.auth.models import Group, AnonymousUser
 from datetime import datetime
@@ -17,14 +17,16 @@ from opaque_keys.edx.locations import SlashSeparatedCourseKey
 
 
 class GroupFactory(DjangoModelFactory):
-    FACTORY_FOR = Group
-    FACTORY_DJANGO_GET_OR_CREATE = ('name', )
+    class Meta(object):
+        model = Group
+        django_get_or_create = ('name', )
 
     name = factory.Sequence(u'group{0}'.format)
 
 
 class UserStandingFactory(DjangoModelFactory):
-    FACTORY_FOR = UserStanding
+    class Meta(object):
+        model = UserStanding
 
     user = None
     account_status = None
@@ -32,38 +34,44 @@ class UserStandingFactory(DjangoModelFactory):
 
 
 class UserProfileFactory(DjangoModelFactory):
-    FACTORY_FOR = UserProfile
-    FACTORY_DJANGO_GET_OR_CREATE = ('user', )
+    class Meta(object):
+        model = UserProfile
+        django_get_or_create = ('user', )
 
     user = None
     name = factory.LazyAttribute(u'{0.user.first_name} {0.user.last_name}'.format)
     level_of_education = None
     gender = u'm'
     mailing_address = None
-    goals = u'World domination'
+    goals = u'Learn a lot'
+    allow_certificate = True
 
 
 class CourseModeFactory(DjangoModelFactory):
-    FACTORY_FOR = CourseMode
+    class Meta(object):
+        model = CourseMode
 
     course_id = None
-    mode_display_name = u'Honor Code',
-    mode_slug = 'honor'
+    mode_display_name = CourseMode.DEFAULT_MODE.name
+    mode_slug = CourseMode.DEFAULT_MODE_SLUG
     min_price = 0
     suggested_prices = ''
     currency = 'usd'
+    expiration_datetime = None
 
 
 class RegistrationFactory(DjangoModelFactory):
-    FACTORY_FOR = Registration
+    class Meta(object):
+        model = Registration
 
     user = None
     activation_key = uuid4().hex.decode('ascii')
 
 
 class UserFactory(DjangoModelFactory):
-    FACTORY_FOR = User
-    FACTORY_DJANGO_GET_OR_CREATE = ('email', 'username')
+    class Meta(object):
+        model = User
+        django_get_or_create = ('email', 'username')
 
     username = factory.Sequence(u'robot{0}'.format)
     email = factory.Sequence(u'robot+test+{0}@edx.org'.format)
@@ -99,7 +107,8 @@ class UserFactory(DjangoModelFactory):
 
 
 class AnonymousUserFactory(factory.Factory):
-    FACTORY_FOR = AnonymousUser
+    class Meta(object):
+        model = AnonymousUser
 
 
 class AdminFactory(UserFactory):
@@ -107,14 +116,25 @@ class AdminFactory(UserFactory):
 
 
 class CourseEnrollmentFactory(DjangoModelFactory):
-    FACTORY_FOR = CourseEnrollment
+    class Meta(object):
+        model = CourseEnrollment
 
     user = factory.SubFactory(UserFactory)
     course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
 
 
+class CourseAccessRoleFactory(DjangoModelFactory):
+    class Meta(object):
+        model = CourseAccessRole
+
+    user = factory.SubFactory(UserFactory)
+    course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
+    role = 'TestRole'
+
+
 class CourseEnrollmentAllowedFactory(DjangoModelFactory):
-    FACTORY_FOR = CourseEnrollmentAllowed
+    class Meta(object):
+        model = CourseEnrollmentAllowed
 
     email = 'test@edx.org'
     course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
@@ -127,7 +147,8 @@ class PendingEmailChangeFactory(DjangoModelFactory):
     new_email: sequence of new+email+{}@edx.org
     activation_key: sequence of integers, padded to 30 characters
     """
-    FACTORY_FOR = PendingEmailChange
+    class Meta(object):
+        model = PendingEmailChange
 
     user = factory.SubFactory(UserFactory)
     new_email = factory.Sequence(u'new+email+{0}@edx.org'.format)

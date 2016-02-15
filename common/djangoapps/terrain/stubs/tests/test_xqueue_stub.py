@@ -6,7 +6,7 @@ import mock
 import unittest
 import json
 import requests
-from ..xqueue import StubXQueueService, StubXQueueHandler
+from ..xqueue import StubXQueueService
 
 
 class FakeTimer(object):
@@ -23,6 +23,7 @@ class FakeTimer(object):
 class StubXQueueServiceTest(unittest.TestCase):
 
     def setUp(self):
+        super(StubXQueueServiceTest, self).setUp()
         self.server = StubXQueueService()
         self.url = "http://127.0.0.1:{0}/xqueue/submit".format(self.server.port)
         self.addCleanup(self.server.shutdown)
@@ -113,19 +114,6 @@ class StubXQueueServiceTest(unittest.TestCase):
             # and that an error message is logged
             self.assertFalse(self.post.called)
             self.assertTrue(logger.error.called)
-
-    def test_register_submission_url(self):
-        # Configure the XQueue stub to notify another service
-        # when it receives a submission.
-        register_url = 'http://127.0.0.1:8000/register_submission'
-        self.server.config['register_submission_url'] = register_url
-
-        callback_url = 'http://127.0.0.1:8000/test_callback'
-        submission = json.dumps({'grader_payload': 'test payload'})
-        self._post_submission(callback_url, 'test_queuekey', 'test_queue', submission)
-
-        # Check that a notification was sent
-        self.post.assert_any_call(register_url, data={'grader_payload': u'test payload'})
 
     def _post_submission(self, callback_url, lms_key, queue_name, xqueue_body):
         """

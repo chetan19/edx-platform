@@ -1,10 +1,20 @@
-import hmac
+"""
+This is a middleware layer which keeps a log of all requests made
+to the server. It is responsible for removing security tokens and
+similar from such events, and relaying them to the event tracking
+framework.
+"""
+
+
 import hashlib
+import hmac
 import json
-import re
 import logging
+import re
+import sys
 
 from django.conf import settings
+from ipware.ip import get_ip
 
 from track import views
 from track import contexts
@@ -15,10 +25,13 @@ log = logging.getLogger(__name__)
 
 CONTEXT_NAME = 'edx.request'
 META_KEY_TO_CONTEXT_KEY = {
-    'REMOTE_ADDR': 'ip',
     'SERVER_NAME': 'host',
     'HTTP_USER_AGENT': 'agent',
-    'PATH_INFO': 'path'
+    'PATH_INFO': 'path',
+    # Not a typo. See:
+    # http://en.wikipedia.org/wiki/HTTP_referer#Origin_of_the_term_referer
+    'HTTP_REFERER': 'referer',
+    'HTTP_ACCEPT_LANGUAGE': 'accept_language',
 }
 
 
@@ -50,7 +63,7 @@ class TrackMiddleware(object):
             # files when we change this.
 
             censored_strings = ['password', 'newpassword', 'new_password',
-                                'oldpassword', 'old_password']
+                                'oldpassword', 'old_password', 'new_password1', 'new_password2']
             post_dict = dict(request.POST)
             get_dict = dict(request.GET)
             for string in censored_strings:
@@ -70,7 +83,27 @@ class TrackMiddleware(object):
 
             views.server_track(request, request.META['PATH_INFO'], event)
         except:
-            pass
+            ## Why do we have the overly broad except?
+            ##
+            ## I added instrumentation so if we drop events on the
+            ## floor, we at least know about it. However, we really
+            ## should just return a 500 here: (1) This will translate
+            ## to much more insidious user-facing bugs if we make any
+            ## decisions based on incorrect data.  (2) If the system
+            ## is down, we should fail and fix it.
+            event = {'event-type': 'exception', 'exception': repr(sys.exc_info()[0])}
+            try:
+                views.server_track(request, request.META['PATH_INFO'], event)
+            except:
+                # At this point, things are really broken. We really
+                # should fail return a 500 to the user here.  However,
+                # the interim decision is to just fail in order to be
+                # consistent with current policy, and expedite the PR.
+                # This version of the code makes no compromises
+                # relative to the code before, while a proper failure
+                # here would involve shifting compromises and
+                # discussion.
+                pass
 
     def should_process_request(self, request):
         """Don't track requests to the specified URL patterns"""
@@ -104,15 +137,20 @@ class TrackMiddleware(object):
             'session': self.get_session_key(request),
             'user_id': self.get_user_primary_key(request),
             'username': self.get_username(request),
+            'ip': self.get_request_ip_address(request),
         }
         for header_name, context_key in META_KEY_TO_CONTEXT_KEY.iteritems():
             context[context_key] = request.META.get(header_name, '')
 
+        # HTTP_USER_AGENT user might can contain the information that include latin1 characters
+        # decoding this using latin1 scheme will prevent to raise UnicodeDecodeError when using
+        # json.dumps for tracking purpose.
+        context['agent'] = context['agent'].decode('latin1')
         # Google Analytics uses the clientId to keep track of unique visitors. A GA cookie looks like
         # this: _ga=GA1.2.1033501218.1368477899. The clientId is this part: 1033501218.1368477899.
         google_analytics_cookie = request.COOKIES.get('_ga')
         if google_analytics_cookie is None:
-            context['client_id'] = None
+            context['client_id'] = request.META.get('HTTP_X_EDX_GA_CLIENT_ID')
         else:
             context['client_id'] = '.'.join(google_analytics_cookie.split('.')[2:])
 
@@ -139,6 +177,11 @@ class TrackMiddleware(object):
         # django.contrib.sessions.backends.base._hash() but use MD5
         # instead of SHA1 so that the result has the same length (32)
         # as the original session_key.
+
+        # TODO: Switch to SHA224, which is secure.
+        # If necessary, drop the last little bit of the hash to make it the same length.
+        # Using a known-insecure hash to shorten is silly.
+        # Also, why do we need same length?
         key_salt = "common.djangoapps.track" + self.__class__.__name__
         key = hashlib.md5(key_salt + settings.SECRET_KEY).digest()
         encrypted_session_key = hmac.new(key, msg=session_key, digestmod=hashlib.md5).hexdigest()
@@ -156,6 +199,14 @@ class TrackMiddleware(object):
         try:
             return request.user.username
         except AttributeError:
+            return ''
+
+    def get_request_ip_address(self, request):
+        """Gets the IP address of the request"""
+        ip_address = get_ip(request)
+        if ip_address is not None:
+            return ip_address
+        else:
             return ''
 
     def process_response(self, _request, response):

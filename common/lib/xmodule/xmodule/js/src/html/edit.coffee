@@ -66,6 +66,8 @@ class @HTMLEditingDescriptor
         schema: "html5",
         # Necessary to preserve relative URLs to our images.
         convert_urls : false,
+        # Sniff UI direction from `.wrapper-view` in studio or `.window-wrap` in LMS
+        directionality: $(".wrapper-view, .window-wrap").prop('dir'),
         content_css : tiny_mce_css_links.join(", "),
         formats : {
           # tinyMCE does block level for code by default
@@ -80,18 +82,19 @@ class @HTMLEditingDescriptor
         image_advtab: true,
         # We may want to add "styleselect" when we collect all styles used throughout the LMS
         toolbar: "formatselect | fontselect | bold italic underline forecolor wrapAsCode | bullist numlist outdent indent blockquote | link unlink image | code",
-        block_formats: interpolate("%(paragraph)s=p;%(preformatted)s=pre;%(heading1)s=h1;%(heading2)s=h2;%(heading3)s=h3", {
+        block_formats: interpolate("%(paragraph)s=p;%(preformatted)s=pre;%(heading3)s=h3;%(heading4)s=h4;%(heading5)s=h5;%(heading6)s=h6", {
             paragraph: gettext("Paragraph"),
             preformatted: gettext("Preformatted"),
-            heading1: gettext("Heading 1"),
-            heading2: gettext("Heading 2"),
-            heading3: gettext("Heading 3")
+            heading3: gettext("Heading 3"),
+            heading4: gettext("Heading 4"),
+            heading5: gettext("Heading 5"),
+            heading6: gettext("Heading 6")
           }, true),
         width: '100%',
         height: '400px',
         menubar: false,
         statusbar: false,
-        
+
         # Necessary to avoid stripping of style tags.
         valid_children : "+body[style]",
 
@@ -99,11 +102,13 @@ class @HTMLEditingDescriptor
         valid_elements: "*[*]",
         extended_valid_elements: "*[*]",
         invalid_elements: "",
-        
+
         setup: @setupTinyMCE,
         # Cannot get access to tinyMCE Editor instance (for focusing) until after it is rendered.
         # The tinyMCE callback passes in the editor as a parameter.
-        init_instance_callback: @initInstanceCallback
+        init_instance_callback: @initInstanceCallback,
+
+        browser_spellcheck: true
       })
       tinymce.addI18n('en', {
         ###

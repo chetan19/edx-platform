@@ -15,6 +15,7 @@ class UserStandingTest(TestCase):
     """test suite for user standing view for enabling and disabling accounts"""
 
     def setUp(self):
+        super(UserStandingTest, self).setUp()
         # create users
         self.bad_user = UserFactory.create(
             username='bad_user',
@@ -55,6 +56,13 @@ class UserStandingTest(TestCase):
 
         # since it's only possible to disable accounts from lms, we're going
         # to skip tests for cms
+
+    @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+    def test_can_access_manage_account_page(self):
+        response = self.admin_client.get(reverse('manage_user_standing'), {
+            'user': self.admin,
+        })
+        self.assertEqual(response.status_code, 200)
 
     @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
     def test_disable_account(self):

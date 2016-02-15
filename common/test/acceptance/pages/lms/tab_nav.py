@@ -21,7 +21,7 @@ class TabNavPage(PageObject):
         Navigate to the tab `tab_name`.
         """
 
-        if tab_name not in ['Courseware', 'Course Info', 'Discussion', 'Wiki', 'Progress']:
+        if tab_name not in ['Course', 'Home', 'Discussion', 'Wiki', 'Progress']:
             self.warning("'{0}' is not a valid tab name".format(tab_name))
 
         # The only identifier for individual tabs is the link href
@@ -33,7 +33,18 @@ class TabNavPage(PageObject):
         else:
             self.warning("No tabs found for '{0}'".format(tab_name))
 
+        self.wait_for_page()
         self._is_on_tab_promise(tab_name).fulfill()
+
+    def mathjax_has_rendered(self):
+        """
+        Check that MathJax has rendered in tab content
+        """
+        mathjax_container = self.q(css=".static_tab_wrapper .MathJax .math")
+        EmptyPromise(
+            lambda: mathjax_container.present and mathjax_container.visible,
+            "MathJax is not visible"
+        ).fulfill()
 
     def is_on_tab(self, tab_name):
         """

@@ -1,6 +1,7 @@
 """
 Test for LMS instructor background task queue management
 """
+from mock import patch, Mock
 from bulk_email.models import CourseEmail, SEND_TO_ALL
 from courseware.tests.factories import UserFactory
 from xmodule.modulestore.exceptions import ItemNotFoundError
@@ -13,8 +14,15 @@ from instructor_task.api import (
     submit_reset_problem_attempts_for_all_students,
     submit_delete_problem_state_for_all_students,
     submit_bulk_course_email,
+    submit_calculate_problem_responses_csv,
     submit_calculate_students_features_csv,
     submit_cohort_students,
+    submit_detailed_enrollment_features_csv,
+    submit_calculate_may_enroll_csv,
+    submit_executive_summary_report,
+    submit_course_survey_report,
+    generate_certificates_for_students,
+    regenerate_certificates
 )
 
 from instructor_task.api_helper import AlreadyRunningError
@@ -24,6 +32,7 @@ from instructor_task.tests.test_base import (InstructorTaskTestCase,
                                              InstructorTaskModuleTestCase,
                                              TestReportMixin,
                                              TEST_COURSE_KEY)
+from certificates.models import CertificateStatuses, CertificateGenerationHistory
 
 
 class InstructorTaskReportTest(InstructorTaskTestCase):
@@ -72,6 +81,8 @@ class InstructorTaskModuleSubmitTest(InstructorTaskModuleTestCase):
     """Tests API methods that involve the submission of module-based background tasks."""
 
     def setUp(self):
+        super(InstructorTaskModuleSubmitTest, self).setUp()
+
         self.initialize_course()
         self.student = UserFactory.create(username="student", email="student@edx.org")
         self.instructor = UserFactory.create(username="instructor", email="instructor@edx.org")
@@ -79,7 +90,6 @@ class InstructorTaskModuleSubmitTest(InstructorTaskModuleTestCase):
     def test_submit_nonexistent_modules(self):
         # confirm that a rescore of a non-existent module returns an exception
         problem_url = InstructorTaskModuleTestCase.problem_location("NonexistentProblem")
-        course_id = self.course.id
         request = None
         with self.assertRaises(ItemNotFoundError):
             submit_rescore_problem_for_student(request, problem_url, self.student)
@@ -95,7 +105,6 @@ class InstructorTaskModuleSubmitTest(InstructorTaskModuleTestCase):
         # (Note that it is easier to test a scoreable but non-rescorable module in test_tasks,
         # where we are creating real modules.)
         problem_url = self.problem_section.location
-        course_id = self.course.id
         request = None
         with self.assertRaises(NotImplementedError):
             submit_rescore_problem_for_student(request, problem_url, self.student)
@@ -158,10 +167,13 @@ class InstructorTaskModuleSubmitTest(InstructorTaskModuleTestCase):
         self._test_submit_task(submit_delete_problem_state_for_all_students)
 
 
+@patch('bulk_email.models.html_to_text', Mock(return_value='Mocking CourseEmail.text_message', autospec=True))
 class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCase):
     """Tests API methods that involve the submission of course-based background tasks."""
 
     def setUp(self):
+        super(InstructorTaskCourseSubmitTest, self).setUp()
+
         self.initialize_course()
         self.student = UserFactory.create(username="student", email="student@edx.org")
         self.instructor = UserFactory.create(username="instructor", email="instructor@edx.org")
@@ -169,7 +181,7 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
     def _define_course_email(self):
         """Create CourseEmail object for testing."""
         course_email = CourseEmail.create(self.course.id, self.instructor, SEND_TO_ALL, "Test Subject", "<p>This is a test message</p>")
-        return course_email.id  # pylint: disable=no-member
+        return course_email.id
 
     def _test_resubmission(self, api_call):
         """
@@ -180,7 +192,7 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
         `AlreadyRunningError`.
         """
         instructor_task = api_call()
-        instructor_task = InstructorTask.objects.get(id=instructor_task.id)  # pylint: disable=no-member
+        instructor_task = InstructorTask.objects.get(id=instructor_task.id)
         instructor_task.task_state = PROGRESS
         instructor_task.save()
         with self.assertRaises(AlreadyRunningError):
@@ -195,8 +207,41 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
         )
         self._test_resubmission(api_call)
 
+    def test_submit_calculate_problem_responses(self):
+        api_call = lambda: submit_calculate_problem_responses_csv(
+            self.create_task_request(self.instructor),
+            self.course.id,
+            problem_location=''
+        )
+        self._test_resubmission(api_call)
+
     def test_submit_calculate_students_features(self):
         api_call = lambda: submit_calculate_students_features_csv(
+            self.create_task_request(self.instructor),
+            self.course.id,
+            features=[]
+        )
+        self._test_resubmission(api_call)
+
+    def test_submit_enrollment_report_features_csv(self):
+        api_call = lambda: submit_detailed_enrollment_features_csv(self.create_task_request(self.instructor),
+                                                                   self.course.id)
+        self._test_resubmission(api_call)
+
+    def test_submit_executive_summary_report(self):
+        api_call = lambda: submit_executive_summary_report(
+            self.create_task_request(self.instructor), self.course.id
+        )
+        self._test_resubmission(api_call)
+
+    def test_submit_course_survey_report(self):
+        api_call = lambda: submit_course_survey_report(
+            self.create_task_request(self.instructor), self.course.id
+        )
+        self._test_resubmission(api_call)
+
+    def test_submit_calculate_may_enroll(self):
+        api_call = lambda: submit_calculate_may_enroll_csv(
             self.create_task_request(self.instructor),
             self.course.id,
             features=[]
@@ -210,3 +255,61 @@ class InstructorTaskCourseSubmitTest(TestReportMixin, InstructorTaskCourseTestCa
             file_name=u'filename.csv'
         )
         self._test_resubmission(api_call)
+
+    def test_submit_generate_certs_students(self):
+        """
+        Tests certificates generation task submission api
+        """
+        api_call = lambda: generate_certificates_for_students(
+            self.create_task_request(self.instructor),
+            self.course.id
+        )
+        self._test_resubmission(api_call)
+
+    def test_regenerate_certificates(self):
+        """
+        Tests certificates regeneration task submission api
+        """
+        def api_call():
+            """
+            wrapper method for regenerate_certificates
+            """
+            return regenerate_certificates(
+                self.create_task_request(self.instructor),
+                self.course.id,
+                [CertificateStatuses.downloadable, CertificateStatuses.generating]
+            )
+        self._test_resubmission(api_call)
+
+    def test_certificate_generation_history(self):
+        """
+        Tests that a new record is added whenever certificate generation/regeneration task is submitted.
+        """
+        instructor_task = generate_certificates_for_students(
+            self.create_task_request(self.instructor),
+            self.course.id
+        )
+        certificate_generation_history = CertificateGenerationHistory.objects.filter(
+            course_id=self.course.id,
+            generated_by=self.instructor,
+            instructor_task=instructor_task,
+            is_regeneration=False
+        )
+
+        # Validate that record was added to CertificateGenerationHistory
+        self.assertTrue(certificate_generation_history.exists())
+
+        instructor_task = regenerate_certificates(
+            self.create_task_request(self.instructor),
+            self.course.id,
+            [CertificateStatuses.downloadable, CertificateStatuses.generating]
+        )
+        certificate_generation_history = CertificateGenerationHistory.objects.filter(
+            course_id=self.course.id,
+            generated_by=self.instructor,
+            instructor_task=instructor_task,
+            is_regeneration=True
+        )
+
+        # Validate that record was added to CertificateGenerationHistory
+        self.assertTrue(certificate_generation_history.exists())

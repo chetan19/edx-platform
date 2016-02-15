@@ -1,12 +1,12 @@
 if Backbone?
   class @DiscussionContentView extends Backbone.View
 
-  
+
     events:
       "click .discussion-flag-abuse": "toggleFlagAbuse"
       "keydown .discussion-flag-abuse":
         (event) -> DiscussionUtil.activateOnSpace(event, @toggleFlagAbuse)
-  
+
     attrRenderer:
       ability: (ability) ->
         for action, selector of @abilityRenderer
@@ -56,7 +56,7 @@ if Backbone?
 
     setWmdContent: (cls_identifier, text) =>
       DiscussionUtil.setWmdContent @$el, $.proxy(@$, @), cls_identifier, text
-      
+
 
     initialize: ->
       @model.bind('change', @renderPartialAttrs, @)
@@ -113,7 +113,7 @@ if Backbone?
         numVotes = votes.up_count
         button.find(".js-sr-vote-count").html(
           interpolate(
-            ngettext("currently %(numVotes)s vote", "currently %(numVotes)s votes", numVotes),
+            ngettext("there is currently %(numVotes)s vote", "there are currently %(numVotes)s votes", numVotes),
             {numVotes: numVotes},
             true
           )
@@ -138,6 +138,8 @@ if Backbone?
       closed: (closed) ->
         @updateButtonState(".action-close", closed)
         @$(".post-label-closed").toggleClass("is-hidden", not closed)
+        @$(".action-vote").toggle(not closed)
+        @$(".display-vote").toggle(closed)
     })
 
     toggleSecondaryActions: (event) =>

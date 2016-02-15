@@ -5,12 +5,167 @@
 # pylint: disable=unused-argument
 
 import os
-from path import path
+from path import Path as path
 import sys
+import mock
+
+MOCK_MODULES = [
+    'lxml',
+    'requests',
+    'xblock',
+    'xblock.fields',
+    'xblock.fragment',
+    'webob',
+    'webob.multidict',
+    'xblock.core',
+    'xblock.runtime',
+    'sortedcontainers',
+    'contracts',
+    'xblock.plugin',
+    'opaque_keys.edx.asides',
+    'dogstats_wrapper',
+    'fs',
+    'fs.errors',
+    'edxmako',
+    'edxmako.shortcuts',
+    'crum',
+    'opaque_keys.edx.locator',
+    'ipware',
+    'ipware.ip',
+    'pygeoip',
+    'ipaddr',
+    'django_countries',
+    'django_countries.fields',
+    'opaque_keys',
+    'opaque_keys.edx',
+    'opaque_keys.edx.keys',
+    'opaque_keys.edx.locations',
+    'courseware',
+    'courseware.access',
+    'courseware.model_data',
+    'courseware.module_render',
+    'courseware.views',
+    'util.request',
+    'eventtracking',
+    'xmodule',
+    'xmodule.exceptions',
+    'xmodule.modulestore',
+    'xmodule.modulestore.exceptions',
+    'xmodule.modulestore.django',
+    'xmodule.fields',
+    'courseware.models',
+    'milestones',
+    'milestones.api',
+    'milestones.models',
+    'milestones.exceptions',
+    'ratelimitbackend',
+    'analytics',
+    'courseware.courses',
+    'django.contrib.staticfiles',
+    'django.contrib.staticfiles.storage',
+    'xmodule.contentstore',
+    'xmodule.contentstore.content',
+    'xblock.exceptions',
+    'xmodule.seq_module',
+    'xmodule.vertical_module',
+    'xmodule.x_module',
+    'nltk',
+    'ratelimitbackend',
+    'ratelimitbackend.exceptions',
+    'social',
+    'social.apps',
+    'social.apps.django_app',
+    'social.backends',
+    'mako',
+    'mako.exceptions',
+    'boto',
+    'boto.exception',
+    'PIL',
+    'reportlab',
+    'reportlab.lib',
+    'pdfgen',
+    'pdfgen.canvas',
+    'reportlab.pdfgen',
+    'reportlab.pdfgen.canvas',
+    'reportlab.lib.pagesizes',
+    'reportlab.lib.units',
+    'reportlab.lib.styles',
+    'reportlab.platypus',
+    'reportlab.platypus.tables',
+    'boto.s3',
+    'boto.s3.connection',
+    'boto.s3.key',
+    'Crypto',
+    'Crypto.Cipher',
+    'Crypto.PublicKey',
+    'openid',
+    'openid.store',
+    'openid.store.interface',
+    'external_auth.views',
+    'mail_utils',
+    'ratelimitbackend.backends',
+    'social.apps.django_app.default',
+    'social.exceptions',
+    'social.pipeline',
+    'xmodule.error_module',
+    'accounts.api',
+    'modulestore.mongo.base',
+    'xmodule.modulestore.mongo',
+    'xmodule.modulestore.mongo.base',
+    'edxval',
+    'edxval.api',
+    'certificates',
+    'certificates.models',
+    'certificates.models.GeneratedCertificate',
+    'shoppingcart',
+    'shopppingcart.models',
+    'shopppingcart.api',
+    'api',
+    'student',
+    'student.views',
+    'student.forms',
+    'student.models',
+    'celery',
+    'celery.task',
+    'student.roles',
+    'embargo.models',
+    'xmodule.vertical_block',
+    'xmodule.course_module',
+    'user_api.accounts.api',
+    'user_api.accounts.serializers',
+    'edx_rest_api_client',
+    'edx_rest_api_client.client',
+    'edx_rest_api_client.exceptions',
+    'student.auth',
+    'ccx_keys',
+    'ccx_keys.locator',
+    'user_api.preferences.api',
+    'rest_framework_oauth.authentication',
+    'certificates.api',
+    'courseware.date_summary',
+]
+
+for mod_name in MOCK_MODULES:
+    sys.modules[mod_name] = mock.Mock()
+
+if "DJANGO_SETTINGS_MODULE" not in os.environ:
+    docs_path = os.getcwd()
+    mezzanine_path_parts = (docs_path, "..")
+    sys.path.insert(0, docs_path)
+    sys.path.insert(0, os.path.realpath(os.path.join(*mezzanine_path_parts)))
+    os.environ["DJANGO_SETTINGS_MODULE"] = "docs_settings"
+    # Django 1.7's setup is required before touching translated strings.
+    import django
+    try:
+        django.setup()
+    except AttributeError:  # < 1.7
+        pass
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
 sys.path.append('../../../../')
+os.environ['DJANGO_SETTINGS_MODULE'] = 'lms.envs.dev'
+#os.environ.setdefault("DJANGO_SETTINGS_MODULE", "lms.envs.dev")
 
 from docs.shared.conf import *
 
@@ -35,10 +190,11 @@ if not on_rtd:  # only import and set the theme if we're building docs locally
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 root = path('../../../..').abspath()
 sys.path.insert(0, root)
-sys.path.append(root / "lms/djangoapps/mobile_api")
-sys.path.append(root / "lms/djangoapps/mobile_api/course_info")
-sys.path.append(root / "lms/djangoapps/mobile_api/users")
-sys.path.append(root / "lms/djangoapps/mobile_api/video_outlines")
+sys.path.append(root / "common/lib/xmodule")
+sys.path.append(root / "common/djangoapps")
+sys.path.append(root / "lms/djangoapps")
+sys.path.append(root / "lms/envs")
+sys.path.append(root / "openedx/core/djangoapps")
 
 sys.path.insert(
     0,
@@ -54,7 +210,7 @@ sys.path.append('.')
 if on_rtd:
     os.environ['DJANGO_SETTINGS_MODULE'] = 'lms'
 else:
-    os.environ['DJANGO_SETTINGS_MODULE'] = 'lms.envs.test'
+    os.environ['DJANGO_SETTINGS_MODULE'] = 'lms'
 
 
 # -- General configuration -----------------------------------------------------
@@ -66,164 +222,7 @@ extensions = [
     'sphinx.ext.todo', 'sphinx.ext.coverage', 'sphinx.ext.pngmath',
     'sphinx.ext.mathjax', 'sphinx.ext.viewcode', 'sphinxcontrib.napoleon']
 
-# List of patterns, relative to source directory, that match files and
-# directories to ignore when looking for source files.
-exclude_patterns = ['build']
+project = u'Open edX Platform APIs'
+copyright = u'2015, edX'
 
-
-# Output file base name for HTML help builder.
-htmlhelp_basename = 'edXDocs'
-
-project = u'edX Platform API Version 0.5 Alpha'
-copyright = u'2014, edX'
-
-# --- Mock modules ------------------------------------------------------------
-
-# Mock all the modules that the readthedocs build can't import
-
-
-class Mock(object):
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def __call__(self, *args, **kwargs):
-        return Mock()
-
-    @classmethod
-    def __getattr__(cls, name):
-        if name in ('__file__', '__path__'):
-            return '/dev/null'
-        elif name[0] == name[0].upper():
-            mockType = type(name, (), {})
-            mockType.__module__ = __name__
-            return mockType
-        else:
-            return Mock()
-
-# The list of modules and submodules that we know give RTD trouble.
-# Make sure you've tried including the relevant package in
-# docs/share/requirements.txt before adding to this list.
-MOCK_MODULES = [
-    'bson',
-    'bson.errors',
-    'bson.objectid',
-    'dateutil',
-    'dateutil.parser',
-    'fs',
-    'fs.errors',
-    'fs.osfs',
-    'lazy',
-    'mako',
-    'mako.template',
-    'matplotlib',
-    'matplotlib.pyplot',
-    'mock',
-    'numpy',
-    'oauthlib',
-    'oauthlib.oauth1',
-    'oauthlib.oauth1.rfc5849',
-    'PIL',
-    'pymongo',
-    'pyparsing',
-    'pysrt',
-    'requests',
-    'scipy.interpolate',
-    'scipy.constants',
-    'scipy.optimize',
-    'yaml',
-    'webob',
-    'webob.multidict',
-]
-
-if on_rtd:
-    for mod_name in MOCK_MODULES:
-        sys.modules[mod_name] = Mock()
-
-# -----------------------------------------------------------------------------
-
-# from http://djangosnippets.org/snippets/2533/
-# autogenerate models definitions
-
-import inspect
-import types
-from HTMLParser import HTMLParser
-
-
-def force_unicode(s, encoding='utf-8', strings_only=False, errors='strict'):
-    """
-    Similar to smart_unicode, except that lazy instances are resolved to
-    strings, rather than kept as lazy objects.
-
-    If strings_only is True, don't convert (some) non-string-like objects.
-    """
-    if strings_only and isinstance(s, (types.NoneType, int)):
-        return s
-    if not isinstance(s, basestring,):
-        if hasattr(s, '__unicode__'):
-            s = unicode(s)
-        else:
-            s = unicode(str(s), encoding, errors)
-    elif not isinstance(s, unicode):
-        s = unicode(s, encoding, errors)
-    return s
-
-
-class MLStripper(HTMLParser):
-    def __init__(self):
-        self.reset()
-        self.fed = []
-
-    def handle_data(self, d):
-        self.fed.append(d)
-
-    def get_data(self):
-        return ''.join(self.fed)
-
-
-def strip_tags(html):
-    s = MLStripper()
-    s.feed(html)
-    return s.get_data()
-
-
-def process_docstring(app, what, name, obj, options, lines):
-    """Autodoc django models"""
-
-    # This causes import errors if left outside the function
-    from django.db import models
-
-    # If you want extract docs from django forms:
-    # from django import forms
-    # from django.forms.models import BaseInlineFormSet
-
-    # Only look at objects that inherit from Django's base MODEL class
-    if inspect.isclass(obj) and issubclass(obj, models.Model):
-        # Grab the field list from the meta class
-        fields = obj._meta._fields()
-
-        for field in fields:
-            # Decode and strip any html out of the field's help text
-            help_text = strip_tags(force_unicode(field.help_text))
-
-            # Decode and capitalize the verbose name, for use if there isn't
-            # any help text
-            verbose_name = force_unicode(field.verbose_name).capitalize()
-
-            if help_text:
-                # Add the model field to the end of the docstring as a param
-                # using the help text as the description
-                lines.append(u':param %s: %s' % (field.attname, help_text))
-            else:
-                # Add the model field to the end of the docstring as a param
-                # using the verbose name as the description
-                lines.append(u':param %s: %s' % (field.attname, verbose_name))
-
-            # Add the field's type to the docstring
-            lines.append(u':type %s: %s' % (field.attname, type(field).__name__))
-    return lines
-
-
-def setup(app):
-    """Setup docsting processors"""
-    #Register the docstring processor with sphinx
-    app.connect('autodoc-process-docstring', process_docstring)
+exclude_patterns = ['build', 'links.rst']

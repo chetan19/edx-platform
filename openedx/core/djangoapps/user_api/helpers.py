@@ -6,8 +6,12 @@ from collections import defaultdict
 from functools import wraps
 import logging
 import json
-from django.http import HttpResponseBadRequest
 
+from django import forms
+from django.core.serializers.json import DjangoJSONEncoder
+from django.http import HttpResponseBadRequest
+from django.utils.encoding import force_text
+from django.utils.functional import Promise
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,9 +49,20 @@ def intercept_errors(api_error, ignore_errors=None):
             try:
                 return func(*args, **kwargs)
             except Exception as ex:
-                # Raise the original exception if it's in our list of "ignored" errors
+                # Raise and log the original exception if it's in our list of "ignored" errors
                 for ignored in ignore_errors or []:
                     if isinstance(ex, ignored):
+                        msg = (
+                            u"A handled error occurred when calling '{func_name}' "
+                            u"with arguments '{args}' and keyword arguments '{kwargs}': "
+                            u"{exception}"
+                        ).format(
+                            func_name=func.func_name,
+                            args=args,
+                            kwargs=kwargs,
+                            exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex)
+                        )
+                        LOGGER.warning(msg)
                         raise
 
                 # Otherwise, log the error and raise the API-specific error
@@ -59,7 +74,7 @@ def intercept_errors(api_error, ignore_errors=None):
                     func_name=func.func_name,
                     args=args,
                     kwargs=kwargs,
-                    exception=repr(ex)
+                    exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex)
                 )
                 LOGGER.exception(msg)
                 raise api_error(msg)
@@ -110,6 +125,16 @@ class FormDescription(object):
         "email": ["min_length", "max_length"],
     }
 
+    FIELD_TYPE_MAP = {
+        forms.CharField: "text",
+        forms.PasswordInput: "password",
+        forms.ChoiceField: "select",
+        forms.TypedChoiceField: "select",
+        forms.Textarea: "textarea",
+        forms.BooleanField: "checkbox",
+        forms.EmailField: "email",
+    }
+
     OVERRIDE_FIELD_PROPERTIES = [
         "label", "type", "defaultValue", "placeholder",
         "instructions", "required", "restrictions",
@@ -130,9 +155,9 @@ class FormDescription(object):
         self._field_overrides = defaultdict(dict)
 
     def add_field(
-        self, name, label=u"", field_type=u"text", default=u"",
-        placeholder=u"", instructions=u"", required=True, restrictions=None,
-        options=None, include_default_option=False, error_messages=None
+            self, name, label=u"", field_type=u"text", default=u"",
+            placeholder=u"", instructions=u"", required=True, restrictions=None,
+            options=None, include_default_option=False, error_messages=None,
     ):
         """Add a field to the form description.
 
@@ -286,7 +311,7 @@ class FormDescription(object):
             "method": self.method,
             "submit_url": self.submit_url,
             "fields": self.fields
-        })
+        }, cls=LocalizedJSONEncoder)
 
     def override_field_properties(self, field_name, **kwargs):
         """Override properties of a field.
@@ -297,7 +322,7 @@ class FormDescription(object):
         Field properties not in `OVERRIDE_FIELD_PROPERTIES` will be ignored.
 
         Arguments:
-            field_name (string): The name of the field to override.
+            field_name (str): The name of the field to override.
 
         Keyword Args:
             Same as to `add_field()`.
@@ -317,6 +342,20 @@ class FormDescription(object):
             for property_name, property_value in kwargs.iteritems()
             if property_name in self.OVERRIDE_FIELD_PROPERTIES
         })
+
+
+class LocalizedJSONEncoder(DjangoJSONEncoder):
+    """
+    JSON handler that evaluates ugettext_lazy promises.
+    """
+    # pylint: disable=method-hidden
+    def default(self, obj):
+        """
+        Forces evaluation of ugettext_lazy promises.
+        """
+        if isinstance(obj, Promise):
+            return force_text(obj)
+        super(LocalizedJSONEncoder, self).default(obj)
 
 
 def shim_student_view(view_func, check_logged_in=False):
@@ -373,16 +412,6 @@ def shim_student_view(view_func, check_logged_in=False):
                         analytics=analytics
                     )
                 )
-
-        # Backwards compatibility: the student view expects both
-        # terms of service and honor code values.  Since we're combining
-        # these into a single checkbox, the only value we may get
-        # from the new view is "honor_code".
-        # Longer term, we will need to make this more flexible to support
-        # open source installations that may have separate checkboxes
-        # for TOS, privacy policy, etc.
-        if request.POST.get("honor_code") is not None and request.POST.get("terms_of_service") is None:
-            request.POST["terms_of_service"] = request.POST.get("honor_code")
 
         # Call the original view to generate a response.
         # We can safely modify the status code or content

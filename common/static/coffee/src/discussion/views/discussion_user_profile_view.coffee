@@ -12,15 +12,13 @@ if Backbone?
       @discussion.reset(@collection, {silent: false})
 
     render: () =>
-      profileTemplate = $("script#_user_profile").html()
-      @$el.html(Mustache.render(profileTemplate, {threads: @discussion.models}))
+      @$el.html(_.template($("#user-profile-template").html())({threads: @discussion.models}))
       @discussion.map (thread) ->
         new DiscussionThreadProfileView(el: @$("article#thread_#{thread.id}"), model: thread).render()
       baseUri = URI(window.location).removeSearch("page")
       pageUrlFunc = (page) -> baseUri.clone().addSearch("page", page)
       paginationParams = DiscussionUtil.getPaginationParams(@page, @numPages, pageUrlFunc)
-      paginationTemplate = $("script#_pagination").html()
-      @$el.find(".pagination").html(Mustache.render(paginationTemplate, paginationParams))
+      @$el.find(".discussion-pagination").html(_.template($("#pagination-template").html())(paginationParams))
 
     changePage: (event) ->
       event.preventDefault()
@@ -37,6 +35,7 @@ if Backbone?
           @numPages = response.num_pages
           @discussion.reset(response.discussion_data, {silent: false})
           history.pushState({}, "", url)
+          $("html, body").animate({ scrollTop: 0 });
         error: =>
           DiscussionUtil.discussionAlert(
             gettext("Sorry"),

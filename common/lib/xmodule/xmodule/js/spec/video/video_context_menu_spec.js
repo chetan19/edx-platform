@@ -5,16 +5,16 @@
             closeSubmenuKeyboard, menu, menuItems, menuSubmenuItem, submenu, submenuItems, overlay, playButton;
 
         openMenu = function () {
-            var container = $('div.video');
+            var container = $('.video');
             jasmine.Clock.useMock();
             container.find('video').trigger('contextmenu');
-            menu = container.children('ol.contextmenu');
-            menuItems = menu.children('li.menu-item').not('.submenu-item');
-            menuSubmenuItem = menu.children('li.menu-item.submenu-item');
-            submenu = menuSubmenuItem.children('ol.submenu');
-            submenuItems = submenu.children('li.menu-item');
-            overlay = container.children('div.overlay');
-            playButton = $('a.video_control.play');
+            menu = container.children('.contextmenu');
+            menuItems = menu.children('.menu-item').not('.submenu-item');
+            menuSubmenuItem = menu.children('.menu-item.submenu-item');
+            submenu = menuSubmenuItem.children('.submenu');
+            submenuItems = submenu.children('.menu-item');
+            overlay = container.children('.overlay');
+            playButton = $('.video_control.play');
         };
 
         keyPressEvent = function(key) {
@@ -68,6 +68,7 @@
             $('source').remove();
             _.result(state.storage, 'clear');
             _.result($('video').data('contextmenu'), 'destroy');
+            _.result(state.videoPlayer, 'destroy');
         });
 
         describe('constructor', function () {
@@ -217,43 +218,31 @@
                 expect(menuSubmenuItem).not.toHaveClass('is-opened');
             });
 
-            // Flaky-test resulting in timeout errors. Disabled 09/18/2014
-            // See TNL-439
-            xit('mouse left/right-clicking behaves as expected on play/pause menu item', function () {
+            it('mouse left/right-clicking behaves as expected on play/pause menu item', function () {
                 var menuItem = menuItems.first();
-                runs(function () {
-                    // Left-click on play
-                    menuItem.click();
+                spyOn(state.videoPlayer, 'isPlaying');
+                spyOn(state.videoPlayer, 'play').andCallFake(function () {
+                    state.videoPlayer.isPlaying.andReturn(true);
+                    state.el.trigger('play');
                 });
-
-                waitsFor(function () {
-                    return state.videoPlayer.isPlaying();
-                }, 'video to start playing', 200);
-
-                runs(function () {
-                    expect(menuItem).toHaveText('Pause');
-                    openMenu();
-                    // Left-click on pause
-                    menuItem.click();
+                spyOn(state.videoPlayer, 'pause').andCallFake(function () {
+                    state.videoPlayer.isPlaying.andReturn(false);
+                    state.el.trigger('pause');
                 });
-
-                waitsFor(function () {
-                    return !state.videoPlayer.isPlaying();
-                }, 'video to start playing', 200);
-
-                runs(function () {
-                    expect(menuItem).toHaveText('Play');
-                    // Right-click on play
-                    menuItem.trigger('contextmenu');
-                });
-
-                waitsFor(function () {
-                    return state.videoPlayer.isPlaying();
-                }, 'video to start playing', 200);
-
-                runs(function () {
-                    expect(menuItem).toHaveText('Pause');
-                });
+                // Left-click on play
+                menuItem.click();
+                expect(state.videoPlayer.play).toHaveBeenCalled();
+                expect(menuItem).toHaveText('Pause');
+                openMenu();
+                // Left-click on pause
+                menuItem.click();
+                expect(state.videoPlayer.pause).toHaveBeenCalled();
+                expect(menuItem).toHaveText('Play');
+                state.videoPlayer.play.reset();
+                // Right-click on play
+                menuItem.trigger('contextmenu');
+                expect(state.videoPlayer.play).toHaveBeenCalled();
+                expect(menuItem).toHaveText('Pause');
             });
 
             it('mouse left/right-clicking behaves as expected on mute/unmute menu item', function () {

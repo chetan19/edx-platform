@@ -10,7 +10,7 @@
  */
 var edx = edx || {};
 
-(function($) {
+(function( $, _ ) {
     'use strict';
     var errorView,
         el = $('#pay-and-verify-container');
@@ -34,11 +34,13 @@ var edx = edx || {};
         errorModel: errorView.model,
         displaySteps: el.data('display-steps'),
         currentStep: el.data('current-step'),
+        courseKey: el.data('course-key'),
+        checkpointLocation: el.data('checkpoint-location'),
         stepInfo: {
             'intro-step': {
+                courseName: el.data('course-name'),
+                hasPaid: el.data('msg-key') === 'verify-now' || el.data('msg-key') === 'verify-later',
                 isActive: el.data('is-active'),
-                introTitle: el.data('intro-title'),
-                introMsg: el.data('intro-msg'),
                 platformName: el.data('platform-name'),
                 requirements: el.data('requirements')
             },
@@ -46,20 +48,53 @@ var edx = edx || {};
                 isActive: el.data('is-active'),
                 requirements: el.data('requirements'),
                 courseKey: el.data('course-key'),
+                courseName: el.data('course-name'),
+                hasVisibleReqs: _.some(
+                    el.data('requirements'),
+                    function( isVisible ) { return isVisible; }
+                ),
+                upgrade: el.data('msg-key') === 'upgrade',
                 minPrice: el.data('course-mode-min-price'),
-                suggestedPrices: (el.data('course-mode-suggested-prices') || "").split(","),
+                sku: el.data('course-mode-sku'),
+                contributionAmount: el.data('contribution-amount'),
+                suggestedPrices: _.filter(
+                    (el.data('course-mode-suggested-prices').toString()).split(","),
+                    function( price ) { return Boolean( price ); }
+                ),
                 currency: el.data('course-mode-currency'),
-                purchaseEndpoint: el.data('purchase-endpoint')
+                processors: el.data('processors'),
+                verificationDeadline: el.data('verification-deadline'),
+                courseModeSlug: el.data('course-mode-slug'),
+                alreadyVerified: el.data('already-verified'),
+                verificationGoodUntil: el.data('verification-good-until'),
+                isABTesting:  el.data('is-ab-testing')
             },
             'payment-confirmation-step': {
+                courseKey: el.data('course-key'),
                 courseName: el.data('course-name'),
                 courseStartDate: el.data('course-start-date'),
-                coursewareUrl: el.data('courseware-url')
+                coursewareUrl: el.data('courseware-url'),
+                platformName: el.data('platform-name'),
+                requirements: el.data('requirements')
+            },
+            'face-photo-step': {
+                platformName: el.data('platform-name'),
+                captureSoundPath: el.data('capture-sound')
+            },
+            'id-photo-step': {
+                platformName: el.data('platform-name'),
+                captureSoundPath: el.data('capture-sound')
             },
             'review-photos-step': {
                 fullName: el.data('full-name'),
                 platformName: el.data('platform-name')
+            },
+            'enrollment-confirmation-step': {
+                courseName: el.data('course-name'),
+                courseStartDate: el.data('course-start-date'),
+                coursewareUrl: el.data('courseware-url'),
+                platformName: el.data('platform-name')
             }
         }
     }).render();
-})(jQuery);
+})( jQuery, _ );

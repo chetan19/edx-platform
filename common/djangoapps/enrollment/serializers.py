@@ -1,10 +1,15 @@
 """
 Serializers for all Course Enrollment related return objects.
-
 """
+import logging
+
 from rest_framework import serializers
-from student.models import CourseEnrollment
+
 from course_modes.models import CourseMode
+from student.models import CourseEnrollment
+
+
+log = logging.getLogger(__name__)
 
 
 class StringListField(serializers.CharField):
@@ -25,25 +30,36 @@ class StringListField(serializers.CharField):
         return [int(item) for item in items]
 
 
-class CourseField(serializers.RelatedField):
-    """Read-Only representation of course enrollment information.
-
-    Aggregates course information from the CourseDescriptor as well as the Course Modes configured
-    for enrolling in the course.
-
+class CourseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Serialize a course descriptor and related information.
     """
 
-    def to_native(self, course):
-        course_id = unicode(course.id)
-        course_modes = ModeSerializer(CourseMode.modes_for_course(course.id)).data  # pylint: disable=no-member
+    course_id = serializers.CharField(source="id")
+    enrollment_start = serializers.DateTimeField(format=None)
+    enrollment_end = serializers.DateTimeField(format=None)
+    course_start = serializers.DateTimeField(source="start", format=None)
+    course_end = serializers.DateTimeField(source="end", format=None)
+    invite_only = serializers.BooleanField(source="invitation_only")
+    course_modes = serializers.SerializerMethodField()
 
-        return {
-            "course_id": course_id,
-            "enrollment_start": course.enrollment_start,
-            "enrollment_end": course.enrollment_end,
-            "invite_only": course.invitation_only,
-            "course_modes": course_modes,
-        }
+    def __init__(self, *args, **kwargs):
+        self.include_expired = kwargs.pop("include_expired", False)
+        super(CourseSerializer, self).__init__(*args, **kwargs)
+
+    def get_course_modes(self, obj):
+        """
+        Retrieve course modes associated with the course.
+        """
+        course_modes = CourseMode.modes_for_course(
+            obj.id,
+            include_expired=self.include_expired,
+            only_selectable=False
+        )
+        return [
+            ModeSerializer(mode).data
+            for mode in course_modes
+        ]
 
 
 class CourseEnrollmentSerializer(serializers.ModelSerializer):
@@ -53,16 +69,16 @@ class CourseEnrollmentSerializer(serializers.ModelSerializer):
     the Course Descriptor and course modes, to give a complete representation of course enrollment.
 
     """
-    course = CourseField()
-    student = serializers.SerializerMethodField('get_username')
+    course_details = CourseSerializer(source="course_overview")
+    user = serializers.SerializerMethodField('get_username')
 
     def get_username(self, model):
         """Retrieves the username from the associated model."""
         return model.username
 
-    class Meta:  # pylint: disable=missing-docstring
+    class Meta(object):
         model = CourseEnrollment
-        fields = ('created', 'mode', 'is_active', 'course', 'student')
+        fields = ('created', 'mode', 'is_active', 'course_details', 'user')
         lookup_field = 'username'
 
 
@@ -81,3 +97,4 @@ class ModeSerializer(serializers.Serializer):
     currency = serializers.CharField(max_length=8)
     expiration_datetime = serializers.DateTimeField()
     description = serializers.CharField()
+    sku = serializers.CharField()

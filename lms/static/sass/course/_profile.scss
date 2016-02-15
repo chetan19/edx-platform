@@ -1,5 +1,5 @@
 .profile-wrapper {
-  color: #000;
+  color: $black;
 
   .user-info {
     @extend .sidebar;
@@ -15,7 +15,7 @@
     header {
       @extend .bottom-border;
       margin: 0;
-      padding: lh(.5);
+      padding: lh(0.5);
 
       h1 {
         margin: 0;
@@ -24,16 +24,14 @@
     }
 
     ul {
-      list-style: none;
-      padding: 0;
-      margin: 0;
+      @extend %ui-no-list;
 
       li {
         border-bottom: 1px solid #d3d3d3;
         box-shadow: 0 1px 0 #eee;
         color: lighten($text-color, 10%);
         display: block;
-        padding: lh(.5) 0 lh(.5) lh(.5);
+        padding: lh(0.5) 0 lh(0.5) lh(0.5);
         position: relative;
         text-decoration: none;
         @include transition(none);
@@ -50,7 +48,7 @@
 
             &[type="text"] {
               @include box-sizing(border-box);
-              margin: lh(.5) 0;
+              margin: lh(0.5) 0;
               width: 100%;
             }
 
@@ -75,7 +73,7 @@
           color: #999;
           font-size: 12px;
           position: absolute;
-          right: lh(.5);
+          right: lh(0.5);
           text-transform: uppercase;
           top: 9px;
 
@@ -106,7 +104,7 @@
           margin: 0;
           padding: 0;
           position: absolute;
-          right: lh(.5);
+          right: lh(0.5);
           text-transform: uppercase;
           top: 9px;
 
@@ -146,10 +144,20 @@
         font-weight: 100;
         margin: 0;
       }
+
+      &.progress-certificates {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+
+        .progress-certificates-title {
+          float: none;
+        }
+      }
     }
 
     #course-success {
-      margin-bottom: 30px;
+      margin-bottom: ($baseline*1.5);
       text-align: center;
       > a {
         @include button(simple, $button-color);
@@ -169,6 +177,68 @@
     #grade-detail-graph {
       min-height: 400px;
       width: 100%;
+    }
+
+    > .credit-eligibility{
+      border-top: 1px solid $lightGrey;
+      margin-top: lh();
+      @include padding-left(0);
+
+      > .credit-eligibility-container {
+          padding: lh();
+        > .credit-help {
+          display: inline-block;
+          background: $blue;
+          color: $white;
+          width: lh(0.6);
+          margin: 0;
+          padding: 0;
+          border-radius: lh(0.9);
+          border-color: $white;
+          text-shadow: None;
+          @include padding-left(0.2em);
+        }
+        > .detail-collapse{
+          border: none;
+          box-shadow: none;
+          background: $white;
+          padding: 0;
+          color: $blue;
+          > i {
+            padding: lh(0.25);
+          }
+          > span{
+            color: inherit;
+          }
+        }
+        > .requirement-container{
+          padding: lh();
+          > .requirement{
+            border-bottom: 1px solid $lightGrey;
+            padding: lh(0.5);
+            > .requirement-name {
+              width: bi-app-invert-percentage(40%);
+              display: inline-block;
+            }
+            > .requirement-status{
+              width: bi-app-invert-percentage(60%);
+              @include float(right);
+              display: inline-block;
+              .fa-times{
+                @extend %t-icon6;
+                color: $alert-color;
+              }
+              .fa-check{
+                @extend %t-icon6;
+                color: $success-color;
+              }
+              > .not-achieve{
+                color: $darkGrey;
+              }
+            }
+          }
+        }
+      }
     }
 
     > .chapters {
@@ -216,22 +286,22 @@
             }
 
             h3 {
-              color: #666;
+              color: $gray-d1;
 
               span {
-                color: #999;
+                color: $gray-d2;
                 font-size: em(14);
                 font-weight: 100;
               }
             }
 
             p {
-              color: #999;
+              color: $gray-d2;;
               font-size: em(14);
             }
 
             .scores {
-              margin: lh(.5) 0;
+              margin: lh(0.5) 0;
 
               h3 {
                 font-size: em(14);

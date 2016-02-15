@@ -12,7 +12,6 @@ not possible to have this LTI multiple times on a single page in LMS.
 from uuid import uuid4
 import textwrap
 import urllib
-import re
 from oauthlib.oauth1.rfc5849 import signature, parameters
 import oauthlib.oauth1
 import hashlib
@@ -256,7 +255,7 @@ class StubLtiHandler(StubHttpRequestHandler):
         # Calculate and encode body hash. See http://oauth.googlecode.com/svn/spec/ext/body_hash/1.0/oauth-bodyhash.html
         sha1 = hashlib.sha1()
         sha1.update(body)
-        oauth_body_hash = unicode(base64.b64encode(sha1.digest()))  # pylint: disable=too-many-function-args
+        oauth_body_hash = unicode(base64.b64encode(sha1.digest()))
         params = client.get_oauth_params(None)
         params.append((u'oauth_body_hash', oauth_body_hash))
         mock_request = mock.Mock(

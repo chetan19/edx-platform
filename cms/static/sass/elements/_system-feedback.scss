@@ -83,7 +83,8 @@
       border-color: $blue-d2;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $blue;
 
       &:hover {
@@ -102,7 +103,8 @@
       color: $gray-d4;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $orange;
 
       &:hover {
@@ -120,7 +122,8 @@
       border-color: $red-d2;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $red-l1;
 
       &:hover {
@@ -138,7 +141,8 @@
       border-color: $blue-d2;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $blue;
 
       &:hover {
@@ -156,7 +160,8 @@
       border-color: $green-d2;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $green;
 
       &:hover {
@@ -174,7 +179,8 @@
       border-color: $pink-d2;
     }
 
-    a {
+    button {
+      @extend %btn-no-style;
       color: $pink;
 
       &:hover {
@@ -406,7 +412,7 @@
   }
 
   .feedback-symbol {
-    @include transition (color 0.50s ease-in-out 0s);
+    @include transition (color $tmg-f1 ease-in-out 0s);
     @extend %t-icon3;
     width: flex-grid(1, 12);
     height: ($baseline*1.25);
@@ -584,7 +590,7 @@
   }
 
   .feedback-symbol {
-    @include transition (color 0.50s ease-in-out 0s);
+    @include transition (color $tmg-f1 ease-in-out 0s);
     @extend %t-icon3;
     width: flex-grid(1, 12);
     margin: ($baseline/4) flex-gutter() 0 0;
@@ -656,7 +662,7 @@
       @extend %cont-text-sr;
     }
 
-    [class^="icon"] {
+    .icon {
       @extend %t-icon6;
       color: $white;
       width: auto;
@@ -760,10 +766,10 @@
   .message {
     @extend %t-copy-sub1;
     background-color: $gray-d2;
-    padding: ($baseline/2) ($baseline*.75);
+    padding: ($baseline/2) ($baseline*0.75);
     color: $white;
 
-    [class^="icon-"] {
+    .icon {
       font-style: normal;
     }
 
@@ -785,7 +791,7 @@
     &.has-warnings {
       border-bottom: 3px solid $orange;
 
-      .icon-warning-sign {
+      .fa-warning {
         margin-right: ($baseline/2);
         color: $orange;
       }
@@ -794,7 +800,7 @@
     &.has-errors {
       border-bottom: 3px solid $red-l2;
 
-      .icon-exclamation-sign {
+      .fa-exclamation-circle {
         margin-right: ($baseline/2);
         color: $red-l2;
       }
@@ -873,13 +879,13 @@ body.uxdesign.alerts {
   .alert {
     @extend %t-copy-sub1;
     padding: 15px 20px;
-    margin-bottom: 30px;
+    margin-bottom: ($baseline*1.5);
     border-radius: 3px;
     border: 1px solid #edbd3c;
     border-radius: 3px;
     background: #fbf6e1;
     // background: #edbd3c;
-    @include clearfix;
+    @include clearfix();
 
     .alert-message {
       @include float(left);
@@ -936,4 +942,8 @@ body.error {
     @extend %t-action1;
     padding: 14px 40px 18px;
   }
+}
+
+.advance-modules-remove-text {
+  margin-top: ($baseline/2);
 }

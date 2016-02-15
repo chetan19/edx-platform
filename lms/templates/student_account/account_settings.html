@@ -1,0 +1,38 @@
+<%!
+import json
+from django.core.urlresolvers import reverse
+from django.conf import settings
+from django.utils.translation import ugettext as _
+%>
+
+<!--<%namespace name='static' file='/static_content.html'/>-->
+
+<%inherit file="/main.html" />
+<%namespace name='static' file='/static_content.html'/>
+
+<%block name="pagetitle">${_("Account Settings")}</%block>
+<%block name="nav_skip">#content</%block>
+
+% if duplicate_provider:
+    <section>
+        <%include file='/dashboard/_dashboard_third_party_error.html' />
+    </section>
+% endif
+
+<div class="wrapper-account-settings"></div>
+
+<%block name="headextra">
+    <%static:css group='style-course'/>
+</%block>
+
+<%block name="js_extra">
+<%static:require_module module_name="js/student_account/views/account_settings_factory" class_name="AccountSettingsFactory">
+    var fieldsData = ${ json.dumps(fields) };
+    var authData = ${ json.dumps(auth) };
+    var platformName = ${json.dumps(static.get_platform_name())};
+
+    AccountSettingsFactory(
+        fieldsData, authData, '${user_accounts_api_url}', '${user_preferences_api_url}', ${user.id}, platformName
+    );
+</%static:require_module>
+</%block>

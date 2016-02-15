@@ -1,0 +1,23 @@
+// ------------------------------
+// Open edX Certificates: Shared Build Compile
+
+// About: Sass compile for Open edX Certificates elements that are shared between LTR and RTL UI. Configuration and vendor specific imports happen before this shared set of imports are compiled in the main-*.scss files.
+
+
+// ------------------------------
+// #CONFIG + LIB
+// ------------------------------
+@import 'lib';
+@import 'config';
+@import '../../../../node_modules/edx-pattern-library/pattern-library/sass/edx-pattern-library';
+
+// ------------------------------
+// #EXTENSIONS
+// ------------------------------
+@import 'utilities';
+@import 'base';
+@import 'components';
+@import 'layouts';
+@import 'views';
+@import 'print';
+@import 'overrides';

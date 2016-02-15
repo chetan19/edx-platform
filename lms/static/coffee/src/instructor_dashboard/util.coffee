@@ -19,7 +19,7 @@ find_and_assert = ($root, selector) ->
 #
 # wraps a `handler` function so that first
 # it prints basic error information to the console.
-std_ajax_err = (handler) -> (jqXHR, textStatus, errorThrown) ->
+@std_ajax_err = (handler) -> (jqXHR, textStatus, errorThrown) ->
   console.warn """ajax error
                   textStatus: #{textStatus}
                   errorThrown: #{errorThrown}"""
@@ -29,7 +29,7 @@ std_ajax_err = (handler) -> (jqXHR, textStatus, errorThrown) ->
 # render a task list table to the DOM
 # `$table_tasks` the $element in which to put the table
 # `tasks_data`
-create_task_list_table = ($table_tasks, tasks_data) ->
+@create_task_list_table = ($table_tasks, tasks_data) ->
   $table_tasks.empty()
 
   options =
@@ -209,7 +209,7 @@ create_email_message_views = ($messages_wrapper, emails) ->
     $email_header.append $('<input>', type: "button", name: "copy-email-body-text", value: gettext("Copy Email To Editor"), id: "copy_email_" + email_id)
 
     $close_button = $ '<a>', href: '#', class: "close-modal"
-    $close_button.append $ '<i>', class: 'icon-remove'
+    $close_button.append $ '<i>', class: 'icon fa fa-times'
     $email_header.append $close_button
 
     # HTML escape the subject line
@@ -264,7 +264,7 @@ class IntervalManager
     @intervalID = null
 
 
-class PendingInstructorTasks
+class @PendingInstructorTasks
   ### Pending Instructor Tasks Section ####
   constructor: (@$section) ->
     # Currently running tasks
@@ -292,12 +292,12 @@ class PendingInstructorTasks
           @$no_tasks_message.hide()
           @$running_tasks_section.show()
         else
-          console.log "No pending instructor tasks to display"
+          console.log "No pending tasks to display"
           @$running_tasks_section.hide()
           @$no_tasks_message.empty()
           @$no_tasks_message.append $('<p>').text gettext("No tasks currently running.")
           @$no_tasks_message.show()
-      error: std_ajax_err => console.error "Error finding pending instructor tasks to display"
+      error: std_ajax_err => console.error "Error finding pending tasks to display"
     ### /Pending Instructor Tasks Section ####
 
 class KeywordValidator
@@ -316,14 +316,74 @@ class KeywordValidator
         do (found_keyword) ->
           if found_keyword not in keywords
             invalid_keywords.push found_keyword
-      
+
       if invalid_keywords.length != 0
         is_valid = false
-      
+
       return {
         is_valid: is_valid,
         invalid_keywords: invalid_keywords
       }
+
+
+class ReportDownloads
+  ### Report Downloads -- links expire quickly, so we refresh every 5 mins ####
+  constructor: (@$section) ->
+
+    @$report_downloads_table = @$section.find ".report-downloads-table"
+
+    POLL_INTERVAL = 20000 # 20 seconds, just like the "pending instructor tasks" table
+    @downloads_poller = new window.InstructorDashboard.util.IntervalManager(
+      POLL_INTERVAL, => @reload_report_downloads()
+    )
+
+  reload_report_downloads: ->
+    endpoint = @$report_downloads_table.data 'endpoint'
+    $.ajax
+      dataType: 'json'
+      url: endpoint
+      success: (data) =>
+        if data.downloads.length
+          @create_report_downloads_table data.downloads
+        else
+          console.log "No reports ready for download"
+      error: (std_ajax_err) => console.error "Error finding report downloads"
+
+  create_report_downloads_table: (report_downloads_data) ->
+    @$report_downloads_table.empty()
+
+    options =
+      enableCellNavigation: true
+      enableColumnReorder: false
+      rowHeight: 30
+      forceFitColumns: true
+
+    columns = [
+      id: 'link'
+      field: 'link'
+      name: gettext('File Name')
+      toolTip: gettext("Links are generated on demand and expire within 5 minutes due to the sensitive nature of student information.")
+      sortable: false
+      minWidth: 150
+      cssClass: "file-download-link"
+      formatter: (row, cell, value, columnDef, dataContext) ->
+        '<a target="_blank" href="' + dataContext['url'] + '">' + dataContext['name'] + '</a>'
+    ]
+
+    $table_placeholder = $ '<div/>', class: 'slickgrid'
+    @$report_downloads_table.append $table_placeholder
+    grid = new Slick.Grid($table_placeholder, report_downloads_data, columns, options)
+    grid.onClick.subscribe(
+        (event) =>
+            report_url = event.target.href
+            if report_url
+                # Record that the user requested to download a report
+                Logger.log('edx.instructor.report.downloaded', {
+                    report_url: report_url
+                })
+    )
+    grid.autosizeColumns()
+
 
 # export for use
 # create parent namespaces if they do not already exist.
@@ -340,3 +400,4 @@ if _?
     create_email_message_views: create_email_message_views
     PendingInstructorTasks: PendingInstructorTasks
     KeywordValidator: KeywordValidator
+    ReportDownloads: ReportDownloads

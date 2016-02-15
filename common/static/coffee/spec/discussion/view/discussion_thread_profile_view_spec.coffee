@@ -2,29 +2,22 @@
 describe "DiscussionThreadProfileView", ->
 
     beforeEach ->
-
-        setFixtures """
-        <article class="discussion-thread" id="thread_1"></article>
-        <script type='text/template' id='_profile_thread'>
-          <article class="discussion-article" data-id="{{id}}">
-            <div class="discussion-post local">
-              <div class="post-body">{{{abbreviatedBody}}}</div>
-            </div>
-          </article>
-        </script>
-        """
+        DiscussionSpecHelper.setUpGlobals()
+        DiscussionSpecHelper.setUnderscoreFixtures()
         @threadData = {
             id: "1",
             body: "dummy body",
             discussion: new Discussion()
             abuse_flaggers: [],
-            votes: {up_count: "42"}
+            commentable_id: 'dummy_discussion',
+            votes: {up_count: "42"},
+            created_at: "2014-09-09T20:11:08Z"
         }
         @imageTag = '<img src="https://www.google.com.pk/images/srpr/logo11w.png">'
         window.MathJax = { Hub: { Queue: -> } }
 
     makeView = (thread) ->
-      view = new DiscussionThreadProfileView(el: $("article#thread_#{thread.id}"), model: thread)
+      view = new DiscussionThreadProfileView(model: thread)
       spyConvertMath(view)
       return view
 
@@ -111,3 +104,7 @@ describe "DiscussionThreadProfileView", ->
         for truncatedText in [true, false]
           it "body with #{numImages} images and #{if truncatedText then "truncated" else "untruncated"} text", ->
             checkPostWithImages(numImages, truncatedText, @threadData, @imageTag)
+
+      it "check the thread retrieve url", ->
+        thread = makeThread(@threadData)
+        expect(thread.urlFor('retrieve')).toBe('/courses/edX/999/test/discussion/forum/dummy_discussion/threads/1')

@@ -1,6 +1,11 @@
-from django.conf.urls.defaults import url, patterns
+"""
+Base urls for the django_comment_client.
+"""
+from django.conf.urls import url, patterns
 
-urlpatterns = patterns('django_comment_client.base.views',  # nopep8
+urlpatterns = patterns(
+    'django_comment_client.base.views',
+
     url(r'upload$', 'upload', name='upload'),
     url(r'threads/(?P<thread_id>[\w\-]+)/update$', 'update_thread', name='update_thread'),
     url(r'threads/(?P<thread_id>[\w\-]+)/reply$', 'create_comment', name='create_comment'),

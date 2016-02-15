@@ -1,5 +1,5 @@
 from django import forms
-from django.forms.util import flatatt
+from django.forms.utils import flatatt
 from django.utils.encoding import force_unicode
 from django.utils.html import conditional_escape
 from django.utils.safestring import mark_safe
@@ -42,7 +42,7 @@ class CodeMirror(BaseEditor):
     def get_widget(self, instance=None):
         return CodeMirrorWidget()
 
-    class AdminMedia:
+    class AdminMedia(object):  # pylint: disable=missing-docstring
         css = {
             'all': ("wiki/markitup/skins/simple/style.css",
                     "wiki/markitup/sets/admin/style.css",)
@@ -52,7 +52,7 @@ class CodeMirror(BaseEditor):
               "wiki/markitup/sets/admin/set.js",
               )
 
-    class Media:
+    class Media(object):  # pylint: disable=missing-docstring
         css = {
             'all': ("js/vendor/CodeMirror/codemirror.css",)
         }

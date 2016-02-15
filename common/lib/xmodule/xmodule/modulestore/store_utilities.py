@@ -3,6 +3,9 @@ import logging
 from collections import namedtuple
 
 import uuid
+from xblock.core import XBlock
+
+DETACHED_XBLOCK_TYPES = set(name for name, __ in XBlock.load_tagged_classes("detached"))
 
 
 def _prefix_only_url_replace_regex(pattern):
@@ -66,7 +69,7 @@ def rewrite_nonportable_content_links(source_course_id, dest_course_id, text):
     #
     if source_course_id != dest_course_id:
         try:
-            generic_courseware_link_base = u'/courses/{}/'.format(source_course_id.to_deprecated_string())
+            generic_courseware_link_base = u'/courses/{}/'.format(unicode(source_course_id))
             text = re.sub(_prefix_only_url_replace_regex(generic_courseware_link_base), portable_asset_link_subtitution, text)
         except Exception as exc:  # pylint: disable=broad-except
             logging.warning("Error producing regex substitution %r for text = %r.\n\nError msg = %s", source_course_id, text, str(exc))

@@ -2,6 +2,7 @@
 
 import fnmatch
 from mock import Mock
+from nose.plugins.attrib import attr
 import os.path
 import textwrap
 
@@ -138,6 +139,7 @@ class HistoryCleanerTest(TransactionTestCase):
         self.assertEqual(self.parse_rows(rows), self.read_history())
 
 
+@attr('shard_1')
 class HistoryCleanerNoDbTest(HistoryCleanerTest):
     """Tests of StudentModuleHistoryCleaner with db access mocked."""
 
@@ -208,6 +210,7 @@ class HistoryCleanerNoDbTest(HistoryCleanerTest):
         smhc.delete_history.assert_called_once_with([42, 23, 15, 8])
 
 
+@attr('shard_1')
 class HistoryCleanerWitDbTest(HistoryCleanerTest):
     """Tests of StudentModuleHistoryCleaner with a real db."""
 
@@ -390,10 +393,8 @@ class SmhcForTestingMain(SmhcSayStubbed):
         if smid in self.exception_smids:
             raise Exception("Something went wrong!")
 
-    def commit(self):
-        self.say("(not really committing)")
 
-
+@attr('shard_1')
 class HistoryCleanerMainTest(HistoryCleanerTest):
     """Tests of StudentModuleHistoryCleaner.main(), using SmhcForTestingMain."""
 
@@ -409,7 +410,7 @@ class HistoryCleanerMainTest(HistoryCleanerTest):
             'No stored state',
             '(not really cleaning 0)',
             '(not really cleaning 1)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 2}',
         )
 
@@ -430,7 +431,7 @@ class HistoryCleanerMainTest(HistoryCleanerTest):
             'Loaded stored state: {"next_student_module_id": 25}',
             '(not really cleaning 25)',
             '(not really cleaning 26)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 27}'
         )
 
@@ -453,11 +454,11 @@ class HistoryCleanerMainTest(HistoryCleanerTest):
             '(not really cleaning 25)',
             '(not really cleaning 26)',
             '(not really cleaning 27)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 28}',
             '(not really cleaning 28)',
             '(not really cleaning 29)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 30}',
         )
 
@@ -481,10 +482,10 @@ class HistoryCleanerMainTest(HistoryCleanerTest):
             '(not really cleaning 26)',
             "Couldn't clean student_module_id 26:\nTraceback*Exception: Something went wrong!\n",
             '(not really cleaning 27)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 28}',
             '(not really cleaning 28)',
             '(not really cleaning 29)',
-            '(not really committing)',
+            'Committing',
             'Saved state: {"next_student_module_id": 30}',
         )

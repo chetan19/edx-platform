@@ -59,6 +59,7 @@ def clear_fields(_step):
         $('{selector}')
             .prop('disabled', false)
             .removeClass('is-disabled')
+            .attr('aria-disabled', false)
             .val('')
             .trigger('input');
     """.format(selector=SELECTORS['url_inputs'])
@@ -172,9 +173,9 @@ def remove_transcripts_from_store(_step, subs_id):
     try:
         content = contentstore().find(content_location)
         contentstore().delete(content.location)
-        print('Transcript file was removed from store.')
+        print 'Transcript file was removed from store.'
     except NotFoundError:
-        print('Transcript file was NOT found and not removed.')
+        print 'Transcript file was NOT found and not removed.'
 
 
 @step('I enter a "([^"]+)" source to field number (\d+)$')
@@ -204,7 +205,7 @@ def check_text_in_the_captions(_step, text):
     world.wait_for_present('.video.is-captions-rendered')
     world.wait_for(lambda _: world.css_text('.subtitles'), timeout=30)
     actual_text = world.css_text('.subtitles')
-    assert (text in actual_text)
+    assert text in actual_text
 
 
 @step('I see value "([^"]*)" in the field "([^"]*)"$')

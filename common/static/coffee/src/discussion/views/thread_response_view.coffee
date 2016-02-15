@@ -13,12 +13,21 @@ if Backbone?
     initialize: (options) ->
       @collapseComments = options.collapseComments
       @createShowView()
+      @readOnly = $('.discussion-module').data('read-only')
 
     renderTemplate: ->
       @template = _.template($("#thread-response-template").html())
 
-      templateData = @model.toJSON()
-      templateData.wmdId = @model.id ? (new Date()).getTime()
+      container = $("#discussion-container")
+      if !container.length
+        # inline discussion
+        container = $(".discussion-module")
+      templateData = _.extend(
+        @model.toJSON(),
+        wmdId: @model.id ? (new Date()).getTime(),
+        create_sub_comment: container.data("user-create-subcomment"),
+        readOnly: @readOnly
+      )
       @template(templateData)
 
     render: ->
@@ -83,7 +92,10 @@ if Backbone?
       comment.set('thread', @model.get('thread'))
       view = new ResponseCommentView(model: comment)
       view.render()
-      @$el.find(".comments .new-comment").before(view.el)
+      if @readOnly
+        @$el.find('.comments').append(view.el)
+      else
+        @$el.find(".comments .new-comment").before(view.el)
       view.bind "comment:edit", (event) =>
         @cancelEdit(event) if @editView?
         @cancelCommentEdits()
@@ -133,13 +145,14 @@ if Backbone?
 
     createEditView: () ->
       if @showView?
-        @showView.undelegateEvents()
         @showView.$el.empty()
-        @showView = null
 
-      @editView = new ThreadResponseEditView(model: @model)
-      @editView.bind "response:update", @update
-      @editView.bind "response:cancel_edit", @cancelEdit
+      if @editView?
+        @editView.model = @model
+      else
+        @editView = new ThreadResponseEditView(model: @model)
+        @editView.bind "response:update", @update
+        @editView.bind "response:cancel_edit", @cancelEdit
 
     renderSubView: (view) ->
       view.setElement(@$('.discussion-response'))
@@ -161,14 +174,15 @@ if Backbone?
     createShowView: () ->
 
       if @editView?
-        @editView.undelegateEvents()
         @editView.$el.empty()
-        @editView = null
 
-      @showView = new ThreadResponseShowView(model: @model)
-      @showView.bind "response:_delete", @_delete
-      @showView.bind "response:edit", @edit
-      @showView.on "comment:endorse", => @trigger("comment:endorse")
+      if @showView?
+        @showView.model = @model
+      else
+        @showView = new ThreadResponseShowView(model: @model)
+        @showView.bind "response:_delete", @_delete
+        @showView.bind "response:edit", @edit
+        @showView.on "comment:endorse", => @trigger("comment:endorse")
 
     renderShowView: () ->
       @renderSubView(@showView)
@@ -197,12 +211,10 @@ if Backbone?
           url: url
           type: "POST"
           dataType: 'json'
-          async: false # TODO when the rest of the stuff below is made to work properly..
           data:
               body: newBody
           error: DiscussionUtil.formErrorHandler(@$(".edit-post-form-errors"))
           success: (response, textStatus) =>
-              # TODO: Move this out of the callback, this makes it feel sluggish
               @editView.$(".edit-post-body textarea").val("").attr("prev-text", "")
               @editView.$(".wmd-preview p").html("")
 

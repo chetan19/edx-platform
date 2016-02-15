@@ -1,8 +1,8 @@
 /**
  * Base view for the payment/verification flow.
  *
- * This view is responsible for the "progress steps"
- * at the top of the page, but it delegates
+ * This view is responsible for keeping track of the
+ * current step, but it delegates to
  * to subviews to render individual steps.
  *
  */
@@ -16,8 +16,6 @@ var edx = edx || {};
     edx.verify_student.PayAndVerifyView = Backbone.View.extend({
         el: '#pay-and-verify-container',
 
-        template: '#progress-tpl',
-
         subviews: {},
 
         VERIFICATION_VIEW_NAMES: [
@@ -27,24 +25,16 @@ var edx = edx || {};
         ],
 
         initialize: function( obj ) {
-            this.errorModel = obj.errorModel || {};
+            this.errorModel = obj.errorModel || null;
             this.displaySteps = obj.displaySteps || [];
+            this.courseKey = obj.courseKey || null;
+            this.checkpointLocation = obj.checkpointLocation || null;
 
-            // Determine which step we're starting on
-            // Depending on how the user enters the flow,
-            // this could be anywhere in the sequence of steps.
+            this.initializeStepViews( obj.stepInfo || {} );
             this.currentStepIndex = _.indexOf(
                 _.pluck( this.displaySteps, 'name' ),
                 obj.currentStep
             );
-
-            this.progressView = new edx.verify_student.ProgressView({
-                el: this.el,
-                displaySteps: this.displaySteps,
-                currentStepIndex: this.currentStepIndex
-            });
-
-            this.initializeStepViews( obj.stepInfo );
         },
 
         initializeStepViews: function( stepInfo ) {
@@ -74,7 +64,14 @@ var edx = edx || {};
             // among the different steps.  This allows
             // one step to save photos and another step
             // to submit them.
-            verificationModel = new edx.verify_student.VerificationModel();
+            //
+            // We also pass in the course key and checkpoint location.
+            // If we've been provided with a checkpoint in the courseware,
+            // this will associate the verification attempt with the checkpoint.
+            verificationModel = new edx.verify_student.VerificationModel({
+                courseKey: this.courseKey,
+                checkpoint: this.checkpointLocation
+            });
 
             for ( i = 0; i < this.displaySteps.length; i++ ) {
                 stepName = this.displaySteps[i].name;
@@ -96,8 +93,6 @@ var edx = edx || {};
 
                     subviewConfig = {
                         errorModel: this.errorModel,
-                        templateName: this.displaySteps[i].templateName,
-                        nextStepNum: (i + 2), // Next index, starting from 1
                         nextStepTitle: nextStepTitle,
                         stepData: stepData
                     };
@@ -121,7 +116,6 @@ var edx = edx || {};
         },
 
         render: function() {
-            this.progressView.render();
             this.renderCurrentStep();
             return this;
         },
@@ -136,8 +130,6 @@ var edx = edx || {};
             }
 
             // Render the subview
-            // Note that this will trigger a GET request for the
-            // underscore template.
             // When the view is rendered, it will overwrite the existing
             // step in the DOM.
             stepName = this.displaySteps[ this.currentStepIndex ].name;
@@ -147,7 +139,10 @@ var edx = edx || {};
         },
 
         nextStep: function() {
-            this.currentStepIndex = Math.min( this.currentStepIndex + 1, this.displaySteps.length - 1 );
+            this.currentStepIndex = Math.min(
+                this.currentStepIndex + 1,
+                this.displaySteps.length - 1
+            );
             this.render();
         },
 
@@ -159,10 +154,10 @@ var edx = edx || {};
 
             if ( stepIndex >= 0 ) {
                 this.currentStepIndex = stepIndex;
-                this.render();
             }
-        },
 
+            this.render();
+        }
     });
 
 })(jQuery, _, Backbone, gettext);

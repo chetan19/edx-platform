@@ -4,9 +4,9 @@ Tests related to the Microsites feature
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.test.utils import override_settings
+from nose.plugins.attrib import attr
 
 from courseware.tests.helpers import LoginEnrollmentTestCase
-from xmodule.modulestore.tests.django_utils import TEST_DATA_MOCK_MODULESTORE
 from course_modes.models import CourseMode
 from xmodule.course_module import (
     CATALOG_VISIBILITY_CATALOG_AND_ABOUT, CATALOG_VISIBILITY_NONE)
@@ -14,7 +14,7 @@ from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
+@attr('shard_1')
 class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     This is testing of the Microsite feature
@@ -23,6 +23,8 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
     STUDENT_INFO = [('view@test.com', 'foo'), ('view2@test.com', 'foo')]
 
     def setUp(self):
+        super(TestMicrosites, self).setUp()
+
         # use a different hostname to test Microsites since they are
         # triggered on subdomain mappings
         #
@@ -32,7 +34,11 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
         # IMPORTANT: For these tests to work, this domain must be defined via
         # DNS configuration (either local or published)
 
-        self.course = CourseFactory.create(display_name='Robot_Super_Course', org='TestMicrositeX')
+        self.course = CourseFactory.create(
+            display_name='Robot_Super_Course',
+            org='TestMicrositeX',
+            emit_signals=True,
+        )
         self.chapter0 = ItemFactory.create(parent_location=self.course.location,
                                            display_name='Overview')
         self.chapter9 = ItemFactory.create(parent_location=self.course.location,
@@ -42,13 +48,18 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
         self.section9 = ItemFactory.create(parent_location=self.chapter9.location,
                                            display_name='factory_section')
 
-        self.course_outside_microsite = CourseFactory.create(display_name='Robot_Course_Outside_Microsite', org='FooX')
+        self.course_outside_microsite = CourseFactory.create(
+            display_name='Robot_Course_Outside_Microsite',
+            org='FooX',
+            emit_signals=True,
+        )
 
         # have a course which explicitly sets visibility in catalog to False
         self.course_hidden_visibility = CourseFactory.create(
             display_name='Hidden_course',
             org='TestMicrositeX',
             catalog_visibility=CATALOG_VISIBILITY_NONE,
+            emit_signals=True,
         )
 
         # have a course which explicitly sets visibility in catalog and about to true
@@ -57,6 +68,7 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
             org='TestMicrositeX',
             course="foo",
             catalog_visibility=CATALOG_VISIBILITY_CATALOG_AND_ABOUT,
+            emit_signals=True,
         )
 
     def setup_users(self):
@@ -130,6 +142,26 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
         # assert that footer template has been properly overriden on homepage
         self.assertNotContains(resp, 'This is a Test Microsite footer')
 
+    @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
+    def test_microsite_anonymous_copyright_content(self):
+        """
+        Verify that the copyright, when accessed via a Microsite domain, returns
+        the expected 200 response
+        """
+
+        resp = self.client.get('/copyright', HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME)
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertContains(resp, 'This is a copyright page for an Open edX microsite.')
+
+    def test_not_microsite_anonymous_copyright_content(self):
+        """
+        Verify that the copyright page does not exist if we are not in a microsite
+        """
+
+        resp = self.client.get('/copyright')
+        self.assertEqual(resp.status_code, 404)
+
     def test_no_redirect_on_homepage_when_no_enrollments(self):
         """
         Verify that a user going to homepage will not redirect if he/she has no course enrollments
@@ -199,8 +231,8 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
         """
         course_mode = CourseMode(
             course_id=self.course_with_visibility.id,
-            mode_slug="honor",
-            mode_display_name="honor cert",
+            mode_slug=CourseMode.DEFAULT_MODE_SLUG,
+            mode_display_name=CourseMode.DEFAULT_MODE_SLUG,
             min_price=10,
         )
         course_mode.save()
@@ -210,13 +242,15 @@ class TestMicrosites(ModuleStoreTestCase, LoginEnrollmentTestCase):
         url = reverse('about_course', args=[self.course_with_visibility.id.to_deprecated_string()])
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("Register for {}".format(self.course_with_visibility.id.course), resp.content)
+        self.assertIn("Enroll in {}".format(self.course_with_visibility.id.course), resp.content)
         self.assertNotIn("Add {} to Cart ($10)".format(self.course_with_visibility.id.course), resp.content)
 
         # now try on the microsite
         url = reverse('about_course', args=[self.course_with_visibility.id.to_deprecated_string()])
         resp = self.client.get(url, HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME)
         self.assertEqual(resp.status_code, 200)
-        self.assertNotIn("Register for {}".format(self.course_with_visibility.id.course), resp.content)
-        self.assertIn("Add {} to Cart ($10)".format(self.course_with_visibility.id.course), resp.content)
+        self.assertNotIn("Enroll in {}".format(self.course_with_visibility.id.course), resp.content)
+        self.assertIn("Add {} to Cart <span>($10 USD)</span>".format(
+            self.course_with_visibility.id.course
+        ), resp.content)
         self.assertIn('$("#add_to_cart_post").click', resp.content)

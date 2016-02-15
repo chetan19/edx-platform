@@ -1,33 +1,31 @@
 from django.core.urlresolvers import reverse
-from django.test.utils import override_settings
+from nose.plugins.attrib import attr
 
 from courseware.tests.tests import LoginEnrollmentTestCase
-from xmodule.modulestore.tests.django_utils import TEST_DATA_MOCK_MODULESTORE
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
 
 from mock import patch
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
-class WikiRedirectTestCase(LoginEnrollmentTestCase):
+@attr('shard_1')
+class WikiRedirectTestCase(LoginEnrollmentTestCase, ModuleStoreTestCase):
     """
     Tests for wiki course redirection.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.toy = CourseFactory.create(org='edX', course='toy', display_name='2012_Fall')
-
     def setUp(self):
+        super(WikiRedirectTestCase, self).setUp()
+        self.toy = CourseFactory.create(org='edX', course='toy', display_name='2012_Fall')
 
         # Create two accounts
         self.student = 'view@test.com'
         self.instructor = 'view2@test.com'
         self.password = 'foo'
-        self.create_account('u1', self.student, self.password)
-        self.create_account('u2', self.instructor, self.password)
-        self.activate_user(self.student)
-        self.activate_user(self.instructor)
+        for username, email in [('u1', self.student), ('u2', self.instructor)]:
+            self.create_account(username, email, self.password)
+            self.activate_user(email)
+            self.logout()
 
     @patch.dict("django.conf.settings.FEATURES", {'ALLOW_WIKI_ROOT_ACCESS': True})
     def test_wiki_redirect(self):
@@ -95,7 +93,6 @@ class WikiRedirectTestCase(LoginEnrollmentTestCase):
         course_wiki_page = referer.replace('progress', 'wiki/' + self.toy.wiki_slug + "/")
 
         ending_location = resp.redirect_chain[-1][0]
-        ending_status = resp.redirect_chain[-1][1]
 
         self.assertEquals(ending_location, 'http://testserver' + course_wiki_page)
         self.assertEquals(resp.status_code, 200)
@@ -106,8 +103,8 @@ class WikiRedirectTestCase(LoginEnrollmentTestCase):
         """
         Ensure that the response has the course navigator.
         """
-        self.assertContains(resp, "Course Info")
-        self.assertContains(resp, "courseware")
+        self.assertContains(resp, "Home")
+        self.assertContains(resp, "Course")
 
     @patch.dict("django.conf.settings.FEATURES", {'ALLOW_WIKI_ROOT_ACCESS': True})
     def test_course_navigator(self):
@@ -136,6 +133,7 @@ class WikiRedirectTestCase(LoginEnrollmentTestCase):
         self.login(self.instructor, self.password)
         self.enroll(self.toy)
         self.create_course_page(self.toy)
+        self.logout()
 
         self.login(self.student, self.password)
         course_wiki_page = reverse('wiki:get', kwargs={'path': self.toy.wiki_slug + '/'})
@@ -168,4 +166,4 @@ class WikiRedirectTestCase(LoginEnrollmentTestCase):
         # and end up at the login page
         resp = self.client.get(course_wiki_page, follow=True)
         target_url, __ = resp.redirect_chain[-1]
-        self.assertTrue(reverse('accounts_login') in target_url)
+        self.assertTrue(reverse('signin_user') in target_url)

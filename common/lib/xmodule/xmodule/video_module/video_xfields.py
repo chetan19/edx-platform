@@ -3,11 +3,11 @@ XFields for video module.
 """
 import datetime
 
-from xblock.fields import Scope, String, Float, Boolean, List, Dict
-
+from xblock.fields import Scope, String, Float, Boolean, List, Dict, DateTime
 from xmodule.fields import RelativeTime
 
-# Make '_' a no-op so we can scrape strings
+# Make '_' a no-op so we can scrape strings. Using lambda instead of
+#  `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
 
 
@@ -31,7 +31,7 @@ class VideoFields(object):
         help=_("Optional, for older browsers: the YouTube ID for the normal speed video."),
         display_name=_("YouTube ID"),
         scope=Scope.settings,
-        default="OEoXaMPEzfM"
+        default="3_yD_cEKoCk"
     )
     youtube_id_0_75 = String(
         help=_("Optional, for older browsers: the YouTube ID for the .75x speed video."),
@@ -52,13 +52,21 @@ class VideoFields(object):
         default=""
     )
     start_time = RelativeTime(  # datetime.timedelta object
-        help=_("Time you want the video to start if you don't want the entire video to play. Formatted as HH:MM:SS. The maximum value is 23:59:59."),
+        help=_(
+            "Time you want the video to start if you don't want the entire video to play. "
+            "Not supported in the native mobile app: the full video file will play. "
+            "Formatted as HH:MM:SS. The maximum value is 23:59:59."
+        ),
         display_name=_("Video Start Time"),
         scope=Scope.settings,
         default=datetime.timedelta(seconds=0)
     )
     end_time = RelativeTime(  # datetime.timedelta object
-        help=_("Time you want the video to stop if you don't want the entire video to play. Formatted as HH:MM:SS. The maximum value is 23:59:59."),
+        help=_(
+            "Time you want the video to stop if you don't want the entire video to play. "
+            "Not supported in the native mobile app: the full video file will play. "
+            "Formatted as HH:MM:SS. The maximum value is 23:59:59."
+        ),
         display_name=_("Video Stop Time"),
         scope=Scope.settings,
         default=datetime.timedelta(seconds=0)
@@ -74,30 +82,30 @@ class VideoFields(object):
         default=""
     )
     download_video = Boolean(
-        help=_("Allow students to download versions of this video in different formats if they cannot use the edX video player or do not have access to YouTube. You must add at least one non-YouTube URL in the Video File URLs field."),
+        help=_("Allow students to download versions of this video in different formats if they cannot use the edX video player or do not have access to YouTube. You must add at least one non-YouTube URL in the Video File URLs field."),  # pylint: disable=line-too-long
         display_name=_("Video Download Allowed"),
         scope=Scope.settings,
         default=False
     )
     html5_sources = List(
-        help=_("The URL or URLs where you've posted non-YouTube versions of the video. Each URL must end in .mpeg, .mp4, .ogg, or .webm and cannot be a YouTube URL. (For browser compatibility, we strongly recommend .mp4 and .webm format.) Students will be able to view the first listed video that's compatible with the student's computer. To allow students to download these videos, set Video Download Allowed to True."),
+        help=_("The URL or URLs where you've posted non-YouTube versions of the video. Each URL must end in .mpeg, .mp4, .ogg, or .webm and cannot be a YouTube URL. (For browser compatibility, we strongly recommend .mp4 and .webm format.) Students will be able to view the first listed video that's compatible with the student's computer. To allow students to download these videos, set Video Download Allowed to True."),  # pylint: disable=line-too-long
         display_name=_("Video File URLs"),
         scope=Scope.settings,
     )
     track = String(
-        help=_("By default, students can download an .srt or .txt transcript when you set Download Transcript Allowed to True. If you want to provide a downloadable transcript in a different format, we recommend that you upload a handout by using the Upload a Handout field. If this isn't possible, you can post a transcript file on the Files & Uploads page or on the Internet, and then add the URL for the transcript here. Students see a link to download that transcript below the video."),
+        help=_("By default, students can download an .srt or .txt transcript when you set Download Transcript Allowed to True. If you want to provide a downloadable transcript in a different format, we recommend that you upload a handout by using the Upload a Handout field. If this isn't possible, you can post a transcript file on the Files & Uploads page or on the Internet, and then add the URL for the transcript here. Students see a link to download that transcript below the video."),  # pylint: disable=line-too-long
         display_name=_("Downloadable Transcript URL"),
         scope=Scope.settings,
         default=''
     )
     download_track = Boolean(
-        help=_("Allow students to download the timed transcript. A link to download the file appears below the video. By default, the transcript is an .srt or .txt file. If you want to provide the transcript for download in a different format, upload a file by using the Upload Handout field."),
+        help=_("Allow students to download the timed transcript. A link to download the file appears below the video. By default, the transcript is an .srt or .txt file. If you want to provide the transcript for download in a different format, upload a file by using the Upload Handout field."),  # pylint: disable=line-too-long
         display_name=_("Download Transcript Allowed"),
         scope=Scope.settings,
         default=False
     )
     sub = String(
-        help=_("The default transcript for the video, from the Default Timed Transcript field on the Basic tab. This transcript should be in English. You don't have to change this setting."),
+        help=_("The default transcript for the video, from the Default Timed Transcript field on the Basic tab. This transcript should be in English. You don't have to change this setting."),  # pylint: disable=line-too-long
         display_name=_("Default Timed Transcript"),
         scope=Scope.settings,
         default=""
@@ -110,7 +118,7 @@ class VideoFields(object):
     )
     # Data format: {'de': 'german_translation', 'uk': 'ukrainian_translation'}
     transcripts = Dict(
-        help=_("Add transcripts in different languages. Click below to specify a language and upload an .srt transcript file for that language."),
+        help=_("Add transcripts in different languages. Click below to specify a language and upload an .srt transcript file for that language."),  # pylint: disable=line-too-long
         display_name=_("Transcript Languages"),
         scope=Scope.settings,
         default={}
@@ -133,7 +141,7 @@ class VideoFields(object):
     )
     speed = Float(
         help=_("The last speed that the user specified for the video."),
-        scope=Scope.user_state,
+        scope=Scope.user_state
     )
     global_speed = Float(
         help=_("The default speed for the video."),
@@ -146,13 +154,31 @@ class VideoFields(object):
         default=True
     )
     handout = String(
-        help=_("Upload a handout to accompany this video. Students can download the handout by clicking Download Handout under the video."),
+        help=_("Upload a handout to accompany this video. Students can download the handout by clicking Download Handout under the video."),  # pylint: disable=line-too-long
         display_name=_("Upload Handout"),
         scope=Scope.settings,
     )
+    only_on_web = Boolean(
+        help=_(
+            "Specify whether access to this video is limited to browsers only, or if it can be "
+            "accessed from other applications including mobile apps."
+        ),
+        display_name=_("Video Available on Web Only"),
+        scope=Scope.settings,
+        default=False
+    )
     edx_video_id = String(
-        help=_('Optional. Use this for videos where download and streaming URLs for the videos are completely managed by edX. This will override the settings for "Default Video URL", "Video File URLs", and all YouTube IDs. If you do not know what this setting is, you can leave it blank and continue to use these other settings.'),
-        display_name=_("EdX Video ID"),
+        help=_("If you were assigned a Video ID by edX for the video to play in this component, enter the ID here. In this case, do not enter values in the Default Video URL, the Video File URLs, and the YouTube ID fields. If you were not assigned a Video ID, enter values in those other fields and ignore this field."),  # pylint: disable=line-too-long
+        display_name=_("Video ID"),
         scope=Scope.settings,
         default="",
+    )
+    bumper_last_view_date = DateTime(
+        display_name=_("Date of the last view of the bumper"),
+        scope=Scope.preferences,
+    )
+    bumper_do_not_show_again = Boolean(
+        display_name=_("Do not show bumper again"),
+        scope=Scope.preferences,
+        default=False,
     )

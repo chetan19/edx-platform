@@ -17,12 +17,11 @@ defined in the environment:
 import yaml
 
 from .common import *
-from logsettings import get_logger_config
+from openedx.core.lib.logsettings import get_logger_config
 from util.config_parse import convert_tokens
 import os
 
-from path import path
-from dealer.git import git
+from path import Path as path
 from xmodule.modulestore.modulestore_settings import convert_module_store_setting_if_needed
 
 # https://stackoverflow.com/questions/2890146/how-to-force-pyyaml-to-load-strings-as-unicode-objects
@@ -76,8 +75,7 @@ BROKER_POOL_LIMIT = 0
 BROKER_CONNECTION_TIMEOUT = 1
 
 # For the Result Store, use the django cache named 'celery'
-CELERY_RESULT_BACKEND = 'cache'
-CELERY_CACHE_BACKEND = 'celery'
+CELERY_RESULT_BACKEND = 'djcelery.backends.cache:CacheBackend'
 
 # When the broker is behind an ELB, use a heartbeat to refresh the
 # connection and to detect if it has been dropped.
@@ -86,11 +84,6 @@ BROKER_HEARTBEAT_CHECKRATE = 2
 
 # Each worker should only fetch one message at a time
 CELERYD_PREFETCH_MULTIPLIER = 1
-
-# Skip djcelery migrations, since we don't use the database as the broker
-SOUTH_MIGRATION_MODULES = {
-    'djcelery': 'ignore',
-}
 
 # Rename the exchange and queues for each variant
 
@@ -122,7 +115,7 @@ ADDL_INSTALLED_APPS = []
 AUTH_USE_CAS = False
 CAS_ATTRIBUTE_CALLBACK = None
 MICROSITE_ROOT_DIR = ''
-SEGMENT_IO = False
+CMS_SEGMENT_KEY = None
 DATADOG = {}
 ADDL_INSTALLED_APPS = []
 LOCAL_LOGLEVEL = 'INFO'
@@ -147,7 +140,7 @@ ENV_TOKENS = convert_tokens(ENV_TOKENS)
 # into settings some dictionary settings
 # need to be merged from common.py
 
-ENV_FEATURES = ENV_TOKENS.get('FEATURES', ENV_TOKENS.get('MITX_FEATURES', {}))
+ENV_FEATURES = ENV_TOKENS.get('FEATURES', {})
 for feature, value in ENV_FEATURES.items():
     FEATURES[feature] = value
 
@@ -171,10 +164,10 @@ if STATIC_URL_BASE:
     STATIC_URL = STATIC_URL_BASE.encode('ascii')
     if not STATIC_URL.endswith("/"):
         STATIC_URL += "/"
-    STATIC_URL += git.revision + "/"
+    STATIC_URL += EDX_PLATFORM_REVISION + "/"
 
 if STATIC_ROOT_BASE:
-    STATIC_ROOT = path(STATIC_ROOT_BASE) / git.revision
+    STATIC_ROOT = path(STATIC_ROOT_BASE) / EDX_PLATFORM_REVISION
 
 
 # Cache used for location mapping -- called many times with the same key/value
@@ -237,9 +230,6 @@ vars().update(AUTH_TOKENS)
 # Manipulate imported settings with code
 #
 
-if SEGMENT_IO_KEY:
-    FEATURES['SEGMENT_IO'] = SEGMENT_IO
-
 if AWS_ACCESS_KEY_ID == "":
     AWS_ACCESS_KEY_ID = None
 
@@ -257,3 +247,7 @@ BROKER_URL = "{0}://{1}:{2}@{3}/{4}".format(CELERY_BROKER_TRANSPORT,
                                             CELERY_BROKER_PASSWORD,
                                             CELERY_BROKER_HOSTNAME,
                                             CELERY_BROKER_VHOST)
+
+######################## CUSTOM COURSES for EDX CONNECTOR ######################
+if FEATURES.get('CUSTOM_COURSES_EDX'):
+    INSTALLED_APPS += ('openedx.core.djangoapps.ccxcon',)

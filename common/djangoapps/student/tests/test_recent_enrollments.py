@@ -15,12 +15,13 @@ from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
 from course_modes.tests.factories import CourseModeFactory
 from student.models import CourseEnrollment, DashboardConfiguration
-from student.views import get_course_enrollment_pairs, _get_recently_enrolled_courses
+from student.views import get_course_enrollments, _get_recently_enrolled_courses
+from common.test.utils import XssTestMixin
 
 
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
 @ddt.ddt
-class TestRecentEnrollments(ModuleStoreTestCase):
+class TestRecentEnrollments(ModuleStoreTestCase, XssTestMixin):
     """
     Unit tests for getting the list of courses for a logged in user
     """
@@ -43,7 +44,7 @@ class TestRecentEnrollments(ModuleStoreTestCase):
 
         # New Course
         course_location = locator.CourseLocator('Org1', 'Course1', 'Run1')
-        self.course, _ = self._create_course_and_enrollment(course_location)
+        self.course, self.enrollment = self._create_course_and_enrollment(course_location)
 
     def _create_course_and_enrollment(self, course_location):
         """ Creates a course and associated enrollment. """
@@ -67,7 +68,7 @@ class TestRecentEnrollments(ModuleStoreTestCase):
         self._configure_message_timeout(60)
 
         # get courses through iterating all courses
-        courses_list = list(get_course_enrollment_pairs(self.student, None, []))
+        courses_list = list(get_course_enrollments(self.student, None, []))
         self.assertEqual(len(courses_list), 2)
 
         recent_course_list = _get_recently_enrolled_courses(courses_list)
@@ -78,7 +79,7 @@ class TestRecentEnrollments(ModuleStoreTestCase):
         Tests that the recent enrollment list is empty if configured to zero seconds.
         """
         self._configure_message_timeout(0)
-        courses_list = list(get_course_enrollment_pairs(self.student, None, []))
+        courses_list = list(get_course_enrollments(self.student, None, []))
         self.assertEqual(len(courses_list), 2)
 
         recent_course_list = _get_recently_enrolled_courses(courses_list)
@@ -106,16 +107,16 @@ class TestRecentEnrollments(ModuleStoreTestCase):
             enrollment.save()
             courses.append(course)
 
-        courses_list = list(get_course_enrollment_pairs(self.student, None, []))
+        courses_list = list(get_course_enrollments(self.student, None, []))
         self.assertEqual(len(courses_list), 6)
 
         recent_course_list = _get_recently_enrolled_courses(courses_list)
         self.assertEqual(len(recent_course_list), 5)
 
-        self.assertEqual(recent_course_list[1], courses[0])
-        self.assertEqual(recent_course_list[2], courses[1])
-        self.assertEqual(recent_course_list[3], courses[2])
-        self.assertEqual(recent_course_list[4], courses[3])
+        self.assertEqual(recent_course_list[1].course.id, courses[0].id)
+        self.assertEqual(recent_course_list[2].course.id, courses[1].id)
+        self.assertEqual(recent_course_list[3].course.id, courses[2].id)
+        self.assertEqual(recent_course_list[4].course.id, courses[3].id)
 
     def test_dashboard_rendering(self):
         """
@@ -126,16 +127,53 @@ class TestRecentEnrollments(ModuleStoreTestCase):
         response = self.client.get(reverse("dashboard"))
         self.assertContains(response, "Thank you for enrolling in")
 
+    def test_dashboard_escaped_rendering(self):
+        """
+        Tests that the dashboard renders the escaped recent enrollment messages appropriately.
+        """
+        self._configure_message_timeout(600)
+        self.client.login(username=self.student.username, password=self.PASSWORD)
+
+        # New Course
+        course_location = locator.CourseLocator('TestOrg', 'TestCourse', 'TestRun')
+        xss_content = "<script>alert('XSS')</script>"
+        course = CourseFactory.create(
+            org=course_location.org,
+            number=course_location.course,
+            run=course_location.run,
+            display_name=xss_content
+        )
+        CourseEnrollment.enroll(self.student, course.id)
+
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, "Thank you for enrolling in")
+
+        # Check if response is escaped
+        self.assert_no_xss(response, xss_content)
+
     @ddt.data(
-        (['audit', 'honor', 'verified'], False),
-        (['professional'], False),
-        (['verified'], False),
-        (['audit'], True),
-        (['honor'], True),
-        ([], True)
+        # Register as honor in any course modes with no payment option
+        ([('audit', 0), ('honor', 0)], 'honor', True),
+        ([('honor', 0)], 'honor', True),
+        # Register as honor in any course modes which has payment option
+        ([('honor', 10)], 'honor', False),  # This is a paid course
+        ([('audit', 0), ('honor', 0), ('professional', 20)], 'honor', True),
+        ([('audit', 0), ('honor', 0), ('verified', 20)], 'honor', True),
+        ([('audit', 0), ('honor', 0), ('verified', 20), ('professional', 20)], 'honor', True),
+        # Register as audit in any course modes with no payment option
+        ([('audit', 0), ('honor', 0)], 'audit', True),
+        ([('audit', 0)], 'audit', True),
+        ([], 'audit', True),
+        # Register as audit in any course modes which has no payment option
+        ([('audit', 0), ('honor', 0), ('verified', 10)], 'audit', True),
+        # Register as verified in any course modes which has payment option
+        ([('professional', 20)], 'professional', False),
+        ([('verified', 20)], 'verified', False),
+        ([('professional', 20), ('verified', 20)], 'verified', False),
+        ([('audit', 0), ('honor', 0), ('verified', 20)], 'verified', False)
     )
     @ddt.unpack
-    def test_donate_button(self, course_modes, show_donate):
+    def test_donate_button(self, course_modes, enrollment_mode, show_donate):
         # Enable the enrollment success message
         self._configure_message_timeout(10000)
 
@@ -143,8 +181,11 @@ class TestRecentEnrollments(ModuleStoreTestCase):
         DonationConfiguration(enabled=True).save()
 
         # Create the course mode(s)
-        for mode in course_modes:
-            CourseModeFactory(mode_slug=mode, course_id=self.course.id)
+        for mode, min_price in course_modes:
+            CourseModeFactory(mode_slug=mode, course_id=self.course.id, min_price=min_price)
+
+        self.enrollment.mode = enrollment_mode
+        self.enrollment.save()
 
         # Check that the donate button is or is not displayed
         self.client.login(username=self.student.username, password=self.PASSWORD)

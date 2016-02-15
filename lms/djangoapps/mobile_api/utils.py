@@ -1,31 +1,18 @@
 """
-Tests for video outline API
+Common utility methods and decorators for Mobile APIs.
 """
+from openedx.core.lib.api.view_utils import view_course_access, view_auth_classes
 
 
-from courseware import access
-from student.roles import CourseBetaTesterRole
-from student import auth
-
-
-def mobile_available_when_enrolled(course, user):
+def mobile_course_access(depth=0):
     """
-    Determines whether a user has access to a course in a mobile context.
-    Checks if the course is marked as mobile_available or the user has extra permissions
-    that gives them access anyway.
-    Does not check if the user is actually enrolled in the course
+    Method decorator for a mobile API endpoint that verifies the user has access to the course in a mobile context.
     """
+    return view_course_access(depth=depth, access_action='load_mobile', check_for_milestones=True)
 
-    # The course doesn't always really exist -- we can have bad data in the enrollments
-    # pointing to non-existent (or removed) courses, in which case `course` is None.
-    if not course:
-        return None
 
-    # Implicitly includes instructor role via the following has_access check
-    beta_tester_role = CourseBetaTesterRole(course.id)
-
-    return (
-        course.mobile_available
-        or auth.has_access(user, beta_tester_role)
-        or access.has_access(user, 'staff', course)
-    )
+def mobile_view(is_user=False):
+    """
+    Function and class decorator that abstracts the authentication and permission checks for mobile api views.
+    """
+    return view_auth_classes(is_user)

@@ -1,4 +1,5 @@
-define(["js/views/baseview", "underscore", "gettext", "js/views/feedback_prompt", "js/views/feedback_notification"],
+define(["js/views/baseview", "underscore", "gettext", "common/js/components/views/feedback_prompt",
+      "common/js/components/views/feedback_notification"],
     function(BaseView, _, gettext, PromptView, NotificationView) {
 var AssetView = BaseView.extend({
   initialize: function() {
@@ -20,6 +21,7 @@ var AssetView = BaseView.extend({
       url: this.model.get('url'),
       external_url: this.model.get('external_url'),
       portable_url: this.model.get('portable_url'),
+      asset_type: this.model.get_extension(),
       uniqueId: uniqueId
     }));
     this.updateLockState();
@@ -77,7 +79,7 @@ var AssetView = BaseView.extend({
   lockAsset: function(e) {
     var asset = this.model;
     var saving = new NotificationView.Mini({
-      title: gettext("Saving&hellip;")
+      title: gettext("Saving")
     }).show();
     asset.save({'locked': !asset.get('locked')}, {
       wait: true, // This means we won't re-render until we get back the success state.

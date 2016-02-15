@@ -11,6 +11,13 @@ class ItemWriteConflictError(Exception):
     pass
 
 
+class MultipleCourseBlocksFound(Exception):
+    """
+    Raise this exception when Iterating over the course blocks return multiple course blocks.
+    """
+    pass
+
+
 class InsufficientSpecificationError(Exception):
     pass
 
@@ -50,8 +57,11 @@ class DuplicateItemError(Exception):
         """
         Print info about what's duplicated
         """
-        return '{0.store}[{0.collection}] already has {0.element_id}'.format(
-            self, Exception.__str__(self, *args, **kwargs)
+        return "{store}[{collection}] already has {element_id} ({exception})".format(
+            store=self.store,
+            collection=self.collection,
+            element_id=self.element_id,
+            exception=Exception.__str__(self, *args, **kwargs),
         )
 
 

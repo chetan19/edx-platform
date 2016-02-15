@@ -1,5 +1,5 @@
-define ["jquery", "jquery.ui", "backbone", "js/views/feedback_prompt", "js/views/feedback_notification",
-    "coffee/src/views/module_edit", "js/models/module_info", "js/utils/module"],
+define ["jquery", "jquery.ui", "backbone", "common/js/components/views/feedback_prompt",
+        "common/js/components/views/feedback_notification", "coffee/src/views/module_edit", "js/models/module_info", "js/utils/module"],
 ($, ui, Backbone, PromptView, NotificationView, ModuleEditView, ModuleModel, ModuleUtils) ->
   class TabsEdit extends Backbone.View
 
@@ -34,7 +34,7 @@ define ["jquery", "jquery.ui", "backbone", "js/views/feedback_prompt", "js/views
       checkbox_element = event.target
       tab_element = $(checkbox_element).parents(".course-tab")[0]
 
-      saving = new NotificationView.Mini({title: gettext("Saving&hellip;")})
+      saving = new NotificationView.Mini({title: gettext("Saving")})
       saving.show()
 
       $.ajax({
@@ -64,7 +64,7 @@ define ["jquery", "jquery.ui", "backbone", "js/views/feedback_prompt", "js/views
       analytics.track "Reordered Pages",
         course: course_location_analytics
 
-      saving = new NotificationView.Mini({title: gettext("Saving&hellip;")})
+      saving = new NotificationView.Mini({title: gettext("Saving")})
       saving.show()
 
       $.ajax({
@@ -89,7 +89,9 @@ define ["jquery", "jquery.ui", "backbone", "js/views/feedback_prompt", "js/views
       editor.$el.addClass('new')
       setTimeout(=>
         editor.$el.removeClass('new')
-      , 500)
+      , 1000)
+      $('html, body').animate {scrollTop: $('.new-component-item').offset().top}, 500
+      
 
       editor.createItem(
         @model.get('id'),
@@ -114,7 +116,7 @@ define ["jquery", "jquery.ui", "backbone", "js/views/feedback_prompt", "js/views
                 course: course_location_analytics
                 id: $component.data('locator')
               deleting = new NotificationView.Mini
-                title: gettext('Deleting&hellip;')
+                title: gettext('Deleting')
               deleting.show()
               $.ajax({
                 type: 'DELETE',

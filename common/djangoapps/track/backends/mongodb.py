@@ -7,6 +7,7 @@ import logging
 import pymongo
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
+from bson.errors import BSONError
 
 from track.backends import BaseBackend
 
@@ -82,15 +83,16 @@ class MongoBackend(BaseBackend):
         # TODO: The creation of indexes can be moved to a Django
         # management command or equivalent. There is also an option to
         # run the indexing on the background, without locking.
-        self.collection.ensure_index([('time', pymongo.DESCENDING)])
-        self.collection.ensure_index('event_type')
+        self.collection.ensure_index([('time', pymongo.DESCENDING)], background=True)
+        self.collection.ensure_index('event_type', background=True)
 
     def send(self, event):
         """Insert the event in to the Mongo collection"""
         try:
             self.collection.insert(event, manipulate=False)
-        except PyMongoError:
-            # The event will be lost in case of a connection error.
+        except (PyMongoError, BSONError):
+            # The event will be lost in case of a connection error or any error
+            # that occurs when trying to insert the event into Mongo.
             # pymongo will re-connect/re-authenticate automatically
             # during the next event.
             msg = 'Error inserting to MongoDB event tracker backend'

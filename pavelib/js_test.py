@@ -19,13 +19,15 @@ __test__ = False  # do not collect
     ("mode=", "m", "dev or run"),
     ("coverage", "c", "Run test under coverage"),
     ("port=", "p", "Port to run test server on (dev mode only)"),
-])
+    ('skip_clean', 'C', 'skip cleaning repository before running tests'),
+], share_with=["pavelib.utils.tests.utils.clean_reports_dir"])
 def test_js(options):
     """
     Run the JavaScript tests
     """
     mode = getattr(options, 'mode', 'run')
     port = None
+    skip_clean = getattr(options, 'skip_clean', False)
 
     if mode == 'run':
         suite = getattr(options, 'suite', 'all')
@@ -46,7 +48,7 @@ def test_js(options):
         )
         return
 
-    test_suite = JsTestSuite(suite, mode=mode, with_coverage=coverage, port=port)
+    test_suite = JsTestSuite(suite, mode=mode, with_coverage=coverage, port=port, skip_clean=skip_clean)
     test_suite.run()
 
 
@@ -59,7 +61,7 @@ def test_js_run(options):
     """
     Run the JavaScript tests and print results to the console
     """
-    setattr(options, 'mode', 'run')
+    options.mode = 'run'
     test_js(options)
 
 
@@ -72,5 +74,5 @@ def test_js_dev(options):
     """
     Run the JavaScript tests in your default browsers
     """
-    setattr(options, 'mode', 'dev')
+    options.mode = 'dev'
     test_js(options)

@@ -27,6 +27,8 @@ class VideoAnnotationModuleTestCase(unittest.TestCase):
         """
         Makes sure that the Video Annotation Module is created.
         """
+        super(VideoAnnotationModuleTestCase, self).setUp()
+
         # return anything except None to test LMS
         def test_real_user(useless):
             useless_user = Mock(email='fake@fake.com', id=useless)
@@ -81,5 +83,14 @@ class VideoAnnotationModuleTestCase(unittest.TestCase):
         Tests to make sure variables passed in truly exist within the html once it is all rendered.
         """
         context = self.mod.student_view({}).content
-        for key in ['display_name', 'instructions_html', 'sourceUrl', 'typeSource', 'poster', 'annotation_storage', 'default_tab', 'instructor_email', 'annotation_mode', "is_course_staff"]:
+        for key in ['display_name',
+                    'instructions_html',
+                    'sourceUrl',
+                    'typeSource',
+                    'poster',
+                    'annotation_storage',
+                    'default_tab',
+                    'instructor_email',
+                    'annotation_mode',
+                    'is_course_staff']:
             self.assertIn(key, context)

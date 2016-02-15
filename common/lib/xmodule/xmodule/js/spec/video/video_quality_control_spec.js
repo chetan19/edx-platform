@@ -1,12 +1,13 @@
 (function (undefined) {
     describe('VideoQualityControl', function () {
-        var state, qualityControl, qualityControlEl, videoPlayer, player;
+        var state, qualityControl, videoPlayer, player;
 
         afterEach(function () {
             $('source').remove();
             if (state.storage) {
                 state.storage.clear();
             }
+            state.videoPlayer.destroy();
         });
 
         describe('constructor, YouTube mode', function () {
@@ -32,8 +33,6 @@
 
             it('add ARIA attributes to quality control', function () {
                 expect(qualityControl.el).toHaveAttrs({
-                    'role': 'button',
-                    'title': 'HD off',
                     'aria-disabled': 'false'
                 });
             });
@@ -92,13 +91,31 @@
                 qualityControl.el.click();
                 expect(player.setPlaybackQuality).toHaveBeenCalledWith('large');
             });
+
+            it('quality control is active if HD is available',
+                function () {
+                 player.getAvailableQualityLevels.andReturn(
+                     ['highres', 'hd1080', 'hd720']
+                 );
+
+                 qualityControl.quality = 'highres';
+
+                 videoPlayer.onPlay();
+                 expect(qualityControl.el).toHaveClass('active');
+            });
+
+            it('can destroy itself', function () {
+                state.videoQualityControl.destroy();
+                expect(state.videoQualityControl).toBeUndefined();
+                expect($('.quality-control')).not.toExist();
+            });
         });
 
         describe('constructor, HTML5 mode', function () {
             it('does not contain the quality control', function () {
                 state =  jasmine.initializePlayer();
 
-                expect(state.el.find('a.quality-control').length).toBe(0);
+                expect(state.el.find('.quality-control').length).toBe(0);
             });
         });
     });

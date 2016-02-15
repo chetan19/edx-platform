@@ -41,7 +41,7 @@
 // CASE: inline styling
 // TO-DO: additional styling cleanup here necessary, for now this case was ported over from _discussion.scss
 .discussion-module {
-  
+
   .wmd-panel {
     width: 100%;
     min-width: 500px;
@@ -101,7 +101,7 @@
     width: 20px;
     height: 20px;
     background-image: url('/static/images/wmd-buttons-transparent.png');
-    background-position: 0px 0px;
+    background-position: 0 0;
     background-repeat: no-repeat;
   }
 

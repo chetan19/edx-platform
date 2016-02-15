@@ -10,7 +10,8 @@ if Backbone?
             {
                 cid: @model.cid,
                 author_display: @getAuthorDisplay(),
-                endorser_display: @getEndorserDisplay()
+                endorser_display: @getEndorserDisplay(),
+                readOnly: $('.discussion-module').data('read-only')
             },
             @model.attributes
         )
@@ -27,7 +28,8 @@ if Backbone?
     convertMath: ->
       element = @$(".response-body")
       element.html DiscussionUtil.postMathJaxProcessor DiscussionUtil.markdownWithHighlight element.text()
-      MathJax.Hub.Queue ["Typeset", MathJax.Hub, element[0]]
+      if MathJax?
+        MathJax.Hub.Queue ["Typeset", MathJax.Hub, element[0]]
 
     edit: (event) ->
         @trigger "response:edit", event

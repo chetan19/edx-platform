@@ -8,32 +8,43 @@ of a student over a period of time. Right now, the only models are the abstract
 `SoftwareSecurePhotoVerification`. The hope is to keep as much of the
 photo verification process as generic as possible.
 """
-from datetime import datetime, timedelta
-from email.utils import formatdate
 import functools
 import json
 import logging
+from datetime import datetime, timedelta
+from email.utils import formatdate
+
+import pytz
+import requests
 import uuid
+from lazy import lazy
+from opaque_keys.edx.keys import UsageKey
+
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.exceptions import ObjectDoesNotExist
+from django.core.urlresolvers import reverse
+from django.core.cache import cache
+from django.dispatch import receiver
+from django.db import models, transaction, IntegrityError
+from django.utils.translation import ugettext as _, ugettext_lazy
 
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
-import pytz
-import requests
-
-from django.conf import settings
-from django.core.urlresolvers import reverse
-from django.db import models
-from django.contrib.auth.models import User
-from django.utils.translation import ugettext as _
-from model_utils.models import StatusModel
+from simple_history.models import HistoricalRecords
+from config_models.models import ConfigurationModel
+from course_modes.models import CourseMode
+from model_utils.models import StatusModel, TimeStampedModel
 from model_utils import Choices
-
-from verify_student.ssencrypt import (
+from lms.djangoapps.verify_student.ssencrypt import (
     random_aes_key, encrypt_and_encode,
     generate_signed_message, rsa_encrypt
 )
+from xmodule.modulestore.django import modulestore
+from xmodule.modulestore.exceptions import ItemNotFoundError
+from xmodule_django.models import CourseKeyField
 
-from reverification.models import MidcourseReverificationWindow
+from microsite_configuration.templatetags.microsite import platform_name
 
 log = logging.getLogger(__name__)
 
@@ -140,7 +151,7 @@ class PhotoVerification(StatusModel):
     # user IDs or something too easily guessable.
     receipt_id = models.CharField(
         db_index=True,
-        default=lambda: generateUUID(),
+        default=generateUUID,
         max_length=255,
     )
 
@@ -150,6 +161,7 @@ class PhotoVerification(StatusModel):
     # Indicates whether or not a user wants to see the verification status
     # displayed on their dash.  Right now, only relevant for allowing students
     # to "dismiss" a failed midcourse reverification message
+    # TODO: This field is deprecated.
     display = models.BooleanField(db_index=True, default=True)
 
     ######################## Fields Set When Submitting ########################
@@ -177,7 +189,8 @@ class PhotoVerification(StatusModel):
     # capturing it so that we can later query for the common problems.
     error_code = models.CharField(blank=True, max_length=50)
 
-    class Meta:
+    class Meta(object):
+        app_label = "verify_student"
         abstract = True
         ordering = ['-created_at']
 
@@ -192,67 +205,85 @@ class PhotoVerification(StatusModel):
         return datetime.now(pytz.UTC) - timedelta(days=days_good_for)
 
     @classmethod
-    def user_is_verified(cls, user, earliest_allowed_date=None, window=None):
+    def user_is_verified(cls, user, earliest_allowed_date=None):
         """
         Return whether or not a user has satisfactorily proved their identity.
         Depending on the policy, this can expire after some period of time, so
         a user might have to renew periodically.
 
-        If window=None, then this will check for the user's *initial* verification.
-        If window is set to anything else, it will check for the reverification
-        associated with that window.
+        This will check for the user's *initial* verification.
         """
         return cls.objects.filter(
             user=user,
             status="approved",
             created_at__gte=(earliest_allowed_date
-                             or cls._earliest_allowed_date()),
-            window=window
+                             or cls._earliest_allowed_date())
         ).exists()
 
     @classmethod
-    def user_has_valid_or_pending(cls, user, earliest_allowed_date=None, window=None):
+    def verification_valid_or_pending(cls, user, earliest_allowed_date=None, queryset=None):
         """
-        Return whether the user has a complete verification attempt that is or
-        *might* be good. This means that it's approved, been submitted, or would
-        have been submitted but had an non-user error when it was being
-        submitted. It's basically any situation in which the user has signed off
-        on the contents of the attempt, and we have not yet received a denial.
+        Check whether the user has a complete verification attempt that is
+        or *might* be good. This means that it's approved, been submitted,
+        or would have been submitted but had an non-user error when it was
+        being submitted.
+        It's basically any situation in which the user has signed off on
+        the contents of the attempt, and we have not yet received a denial.
+        This will check for the user's *initial* verification.
 
-        If window=None, this will check for the user's *initial* verification.  If
-        window is anything else, this will check for the reverification associated
-        with that window.
+        Arguments:
+            user:
+            earliest_allowed_date: earliest allowed date given in the
+                settings
+            queryset: If a queryset is provided, that will be used instead
+                of hitting the database.
+
+        Returns:
+            queryset: queryset of 'PhotoVerification' sorted by 'created_at' in
+            descending order.
         """
-        valid_statuses = ['submitted', 'approved']
-        if not window:
-            valid_statuses.append('must_retry')
-        return cls.objects.filter(
-            user=user,
+
+        valid_statuses = ['submitted', 'approved', 'must_retry']
+
+        if queryset is None:
+            queryset = cls.objects.filter(user=user)
+
+        return queryset.filter(
             status__in=valid_statuses,
-            created_at__gte=(earliest_allowed_date
-                             or cls._earliest_allowed_date()),
-            window=window,
-        ).exists()
+            created_at__gte=(
+                earliest_allowed_date
+                or cls._earliest_allowed_date()
+            )
+        ).order_by('-created_at')
 
     @classmethod
-    def active_for_user(cls, user, window=None):
+    def user_has_valid_or_pending(cls, user, earliest_allowed_date=None, queryset=None):
+        """
+        Check whether the user has an active or pending verification attempt
+
+        Returns:
+            bool: True or False according to existence of valid verifications
+        """
+        return cls.verification_valid_or_pending(user, earliest_allowed_date, queryset).exists()
+
+    @classmethod
+    def active_for_user(cls, user):
         """
         Return the most recent PhotoVerification that is marked ready (i.e. the
         user has said they're set, but we haven't submitted anything yet).
 
-        If window=None, this checks for the original verification.  If window is set to
-        anything else, this will check for the reverification associated with that window.
+        This checks for the original verification.
         """
         # This should only be one at the most, but just in case we create more
         # by mistake, we'll grab the most recently created one.
-        active_attempts = cls.objects.filter(user=user, status='ready', window=window).order_by('-created_at')
+        active_attempts = cls.objects.filter(user=user, status='ready').order_by('-created_at')
         if active_attempts:
             return active_attempts[0]
         else:
             return None
 
     @classmethod
-    def user_status(cls, user, window=None):
+    def user_status(cls, user):
         """
         Returns the status of the user based on their past verification attempts
 
@@ -262,16 +293,15 @@ class PhotoVerification(StatusModel):
         If the verification process is still ongoing, returns 'pending'
         If the verification has been denied and the user must resubmit photos, returns 'must_reverify'
 
-        If window=None, this checks initial verifications
-        If window is set, this checks for the reverification associated with that window
+        This checks initial verifications
         """
         status = 'none'
         error_msg = ''
 
-        if cls.user_is_verified(user, window=window):
+        if cls.user_is_verified(user):
             status = 'approved'
 
-        elif cls.user_has_valid_or_pending(user, window=window):
+        elif cls.user_has_valid_or_pending(user):
             # user_has_valid_or_pending does include 'approved', but if we are
             # here, we know that the attempt is still pending
             status = 'pending'
@@ -280,28 +310,23 @@ class PhotoVerification(StatusModel):
             # we need to check the most recent attempt to see if we need to ask them to do
             # a retry
             try:
-                attempts = cls.objects.filter(user=user, window=window).order_by('-updated_at')
+                attempts = cls.objects.filter(user=user).order_by('-updated_at')
                 attempt = attempts[0]
             except IndexError:
-
-                # If no verification exists for a *midcourse* reverification, then that just
-                # means the student still needs to reverify.  For *original* verifications,
                 # we return 'none'
-                if(window):
-                    return('must_reverify', error_msg)
-                else:
-                    return ('none', error_msg)
+
+                return ('none', error_msg)
 
             if attempt.created_at < cls._earliest_allowed_date():
-                return ('expired', error_msg)
+                return (
+                    'expired',
+                    _("Your {platform_name} verification has expired.").format(platform_name=platform_name())
+                )
 
             # If someone is denied their original verification attempt, they can try to reverify.
-            # However, if a midcourse reverification is denied, that denial is permanent.
             if attempt.status == 'denied':
-                if window is None:
-                    status = 'must_reverify'
-                else:
-                    status = 'denied'
+                status = 'must_reverify'
+
             if attempt.error_msg:
                 error_msg = attempt.parsed_error_msg()
 
@@ -451,6 +476,9 @@ class PhotoVerification(StatusModel):
         if self.status == "approved":
             return
 
+        log.info(u"Verification for user '{user_id}' approved by '{reviewer}'.".format(
+            user_id=self.user, reviewer=user_id
+        ))
         self.error_msg = ""  # reset, in case this attempt was denied before
         self.error_code = ""  # reset, in case this attempt was denied before
         self.reviewing_user = user_id
@@ -494,6 +522,9 @@ class PhotoVerification(StatusModel):
             lets you amend the error message in case there were additional
             details to be made.
         """
+        log.info(u"Verification for user '{user_id}' denied by '{reviewer}'.".format(
+            user_id=self.user, reviewer=reviewing_user
+        ))
         self.error_msg = error_msg
         self.error_code = error_code
         self.reviewing_user = reviewing_user
@@ -523,28 +554,6 @@ class PhotoVerification(StatusModel):
         self.status = "must_retry"
         self.save()
 
-    @classmethod
-    def display_off(cls, user_id):
-        """
-        Find all failed PhotoVerifications for a user, and sets those verifications' `display`
-        property to false, so the notification banner can be switched off.
-        """
-        user = User.objects.get(id=user_id)
-        cls.objects.filter(user=user, status="denied").exclude(window=None).update(display=False)
-
-    @classmethod
-    def display_status(cls, user, window):
-        """
-        Finds the `display` property for the PhotoVerification associated with
-        (user, window). Default is True
-        """
-        attempts = cls.objects.filter(user=user, window=window).order_by('-updated_at')
-        try:
-            attempt = attempts[0]
-            return attempt.display
-        except IndexError:
-            return True
-
 
 class SoftwareSecurePhotoVerification(PhotoVerification):
     """
@@ -571,11 +580,8 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
     3. The encrypted photos are base64 encoded and stored in an S3 bucket that
        edx-platform does not have read access to.
 
-    Note: this model handles both *inital* verifications (which you must perform
-    at the time you register for a verified cert), and *midcourse reverifications*.
-    To distinguish between the two, check the value of the property window:
-    intial verifications of a window of None, whereas midcourse reverifications
-    * must always be linked to a specific window*.
+    Note: this model handles *inital* verifications (which you must perform
+    at the time you register for a verified cert).
     """
     # This is a base64.urlsafe_encode(rsa_encrypt(photo_id_aes_key), ss_pub_key)
     # So first we generate a random AES-256 key to encrypt our photo ID with.
@@ -584,43 +590,24 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
     photo_id_key = models.TextField(max_length=1024)
 
     IMAGE_LINK_DURATION = 5 * 60 * 60 * 24  # 5 days in seconds
-
-    window = models.ForeignKey(MidcourseReverificationWindow, db_index=True, null=True)
-
-    @classmethod
-    def user_is_reverified_for_all(cls, course_id, user):
-        """
-        Checks to see if the student has successfully reverified for all of the
-        mandatory re-verification windows associated with a course.
-
-        This is used primarily by the certificate generation code... if the user is
-        not re-verified for all windows, then they cannot receive a certificate.
-        """
-        all_windows = MidcourseReverificationWindow.objects.filter(course_id=course_id)
-        # if there are no windows for a course, then return True right off
-        if (not all_windows.exists()):
-            return True
-
-        for window in all_windows:
-            try:
-                # The status of the most recent reverification for each window must be "approved"
-                # for a student to count as completely reverified
-                attempts = cls.objects.filter(user=user, window=window).order_by('-updated_at')
-                attempt = attempts[0]
-                if attempt.status != "approved":
-                    return False
-            except Exception:  # pylint: disable=broad-except
-                return False
-
-        return True
+    copy_id_photo_from = models.ForeignKey("self", null=True, blank=True)
 
     @classmethod
-    def original_verification(cls, user):
+    def get_initial_verification(cls, user):
+        """Get initial verification for a user with the 'photo_id_key'.
+
+        Arguments:
+            user(User): user object
+
+        Return:
+            SoftwareSecurePhotoVerification (object)
         """
-        Returns the most current SoftwareSecurePhotoVerification object associated with the user.
-        """
-        query = cls.objects.filter(user=user, window=None).order_by('-updated_at')
-        return query[0]
+        init_verification = cls.objects.filter(
+            user=user,
+            status__in=["submitted", "approved"]
+        ).exclude(photo_id_key='')
+
+        return init_verification.latest('created_at') if init_verification.exists() else None
 
     @status_before_must_be("created")
     def upload_face_image(self, img_data):
@@ -646,19 +633,6 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
         s3_key.set_contents_from_string(encrypt_and_encode(img_data, aes_key))
 
     @status_before_must_be("created")
-    def fetch_photo_id_image(self):
-        """
-        Find the user's photo ID image, which was submitted with their original verification.
-        The image has already been encrypted and stored in s3, so we just need to find that
-        location
-        """
-        if settings.FEATURES.get('AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING'):
-            return
-
-        self.photo_id_key = self.original_verification(self.user).photo_id_key
-        self.save()
-
-    @status_before_must_be("created")
     def upload_photo_id_image(self, img_data):
         """
         Upload an the user's photo ID image to S3. `img_data` should be a raw
@@ -675,6 +649,9 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
         # verification functionality. If you do want to work on it, you have to
         # explicitly enable these in your private settings.
         if settings.FEATURES.get('AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING'):
+            # fake photo id key is set only for initial verification
+            self.photo_id_key = 'fake-photo-id-key'
+            self.save()
             return
 
         aes_key = random_aes_key()
@@ -690,14 +667,20 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
         self.save()
 
     @status_before_must_be("must_retry", "ready", "submitted")
-    def submit(self):
+    def submit(self, copy_id_photo_from=None):
         """
         Submit our verification attempt to Software Secure for validation. This
         will set our status to "submitted" if the post is successful, and
         "must_retry" if the post fails.
+
+        Keyword Arguments:
+            copy_id_photo_from (SoftwareSecurePhotoVerification): If provided, re-send the ID photo
+                data from this attempt.  This is used for reverification, in which new face photos
+                are sent with previously-submitted ID photos.
+
         """
         try:
-            response = self.send_request()
+            response = self.send_request(copy_id_photo_from=copy_id_photo_from)
             if response.ok:
                 self.submitted_at = datetime.now(pytz.UTC)
                 self.status = "submitted"
@@ -727,7 +710,7 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
             ("photoIdReasons", "Text not clear"): _("We couldn't read your name from your photo ID image."),
             ("generalReasons", "Name mismatch"): _("The name associated with your account and the name on your ID do not match."),
             ("userPhotoReasons", "Image not clear"): _("The image of your face was not clear."),
-            ("userPhotoReasons", "Face out of view"): _("Your face was not visible in your self-photo"),
+            ("userPhotoReasons", "Face out of view"): _("Your face was not visible in your self-photo."),
         }
 
         try:
@@ -747,15 +730,28 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
             log.error('PhotoVerification: Error parsing this error message: %s', self.error_msg)
             return _("There was an error verifying your ID photos.")
 
-    def image_url(self, name):
+    def image_url(self, name, override_receipt_id=None):
         """
         We dynamically generate this, since we want it the expiration clock to
         start when the message is created, not when the record is created.
+
+        Arguments:
+            name (str): Name of the image (e.g. "photo_id" or "face")
+
+        Keyword Arguments:
+            override_receipt_id (str): If provided, use this receipt ID instead
+                of the ID for this attempt.  This is useful for reverification
+                where we need to construct a URL to a previously-submitted
+                photo ID image.
+
+        Returns:
+            string: The expiring URL for the image.
+
         """
-        s3_key = self._generate_s3_key(name)
+        s3_key = self._generate_s3_key(name, override_receipt_id=override_receipt_id)
         return s3_key.generate_url(self.IMAGE_LINK_DURATION)
 
-    def _generate_s3_key(self, prefix):
+    def _generate_s3_key(self, prefix, override_receipt_id=None):
         """
         Generates a key for an s3 bucket location
 
@@ -767,8 +763,14 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
         )
         bucket = conn.get_bucket(settings.VERIFY_STUDENT["SOFTWARE_SECURE"]["S3_BUCKET"])
 
+        # Override the receipt ID if one is provided.
+        # This allow us to construct S3 keys to images submitted in previous attempts
+        # (used for reverification, where we send a new face photo with the same photo ID
+        # from a previous attempt).
+        receipt_id = self.receipt_id if override_receipt_id is None else override_receipt_id
+
         key = Key(bucket)
-        key.key = "{}/{}".format(prefix, self.receipt_id)
+        key.key = "{}/{}".format(prefix, receipt_id)
 
         return key
 
@@ -786,8 +788,19 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
 
         return rsa_encrypted_face_aes_key.encode("base64")
 
-    def create_request(self):
-        """return headers, body_dict"""
+    def create_request(self, copy_id_photo_from=None):
+        """
+        Construct the HTTP request to the photo verification service.
+
+        Keyword Arguments:
+            copy_id_photo_from (SoftwareSecurePhotoVerification): If provided, re-send the ID photo
+                data from this attempt.  This is used for reverification, in which new face photos
+                are sent with previously-submitted ID photos.
+
+        Returns:
+            tuple of (header, body), where both `header` and `body` are dictionaries.
+
+        """
         access_key = settings.VERIFY_STUDENT["SOFTWARE_SECURE"]["API_ACCESS_KEY"]
         secret_key = settings.VERIFY_STUDENT["SOFTWARE_SECURE"]["API_SECRET_KEY"]
 
@@ -796,11 +809,25 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
             scheme, settings.SITE_NAME, reverse('verify_student_results_callback')
         )
 
+        # If we're copying the photo ID image from a previous verification attempt,
+        # then we need to send the old image data with the correct image key.
+        photo_id_url = (
+            self.image_url("photo_id")
+            if copy_id_photo_from is None
+            else self.image_url("photo_id", override_receipt_id=copy_id_photo_from.receipt_id)
+        )
+
+        photo_id_key = (
+            self.photo_id_key
+            if copy_id_photo_from is None else
+            copy_id_photo_from.photo_id_key
+        )
+
         body = {
             "EdX-ID": str(self.receipt_id),
             "ExpectedName": self.name,
-            "PhotoID": self.image_url("photo_id"),
-            "PhotoIDKey": self.photo_id_key,
+            "PhotoID": photo_id_url,
+            "PhotoIDKey": photo_id_key,
             "SendResponseTo": callback_url,
             "UserPhoto": self.image_url("face"),
             "UserPhotoKey": self._encrypted_user_photo_key_str(),
@@ -833,11 +860,18 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
 
         return header_txt + "\n\n" + body_txt
 
-    def send_request(self):
+    def send_request(self, copy_id_photo_from=None):
         """
         Assembles a submission to Software Secure and sends it via HTTPS.
 
-        Returns a request.Response() object with the reply we get from SS.
+        Keyword Arguments:
+            copy_id_photo_from (SoftwareSecurePhotoVerification): If provided, re-send the ID photo
+                data from this attempt.  This is used for reverification, in which new face photos
+                are sent with previously-submitted ID photos.
+
+        Returns:
+            request.Response
+
         """
         # If AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING is True, we want to
         # skip posting anything to Software Secure. We actually don't even
@@ -849,17 +883,515 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
             fake_response.status_code = 200
             return fake_response
 
-        headers, body = self.create_request()
+        headers, body = self.create_request(copy_id_photo_from=copy_id_photo_from)
         response = requests.post(
             settings.VERIFY_STUDENT["SOFTWARE_SECURE"]["API_URL"],
             headers=headers,
             data=json.dumps(body, indent=2, sort_keys=True, ensure_ascii=False).encode('utf-8'),
             verify=False
         )
-        log.debug("Sent request to Software Secure for {}".format(self.receipt_id))
+
+        log.info("Sent request to Software Secure for receipt ID %s.", self.receipt_id)
+        if copy_id_photo_from is not None:
+            log.info(
+                (
+                    "Software Secure attempt with receipt ID %s used the same photo ID "
+                    "data as the receipt with ID %s"
+                ),
+                self.receipt_id, copy_id_photo_from.receipt_id
+            )
+
         log.debug("Headers:\n{}\n\n".format(headers))
         log.debug("Body:\n{}\n\n".format(body))
         log.debug("Return code: {}".format(response.status_code))
         log.debug("Return message:\n\n{}\n\n".format(response.text))
 
         return response
+
+    @classmethod
+    def verification_status_for_user(cls, user, course_id, user_enrollment_mode):
+        """
+        Returns the verification status for use in grade report.
+        """
+        if user_enrollment_mode not in CourseMode.VERIFIED_MODES:
+            return 'N/A'
+
+        user_is_verified = cls.user_is_verified(user)
+
+        if not user_is_verified:
+            return 'Not ID Verified'
+        else:
+            return 'ID Verified'
+
+
+class VerificationDeadline(TimeStampedModel):
+    """
+    Represent a verification deadline for a particular course.
+
+    The verification deadline is the datetime after which
+    users are no longer allowed to submit photos for initial verification
+    in a course.
+
+    Note that this is NOT the same as the "upgrade" deadline, after
+    which a user is no longer allowed to upgrade to a verified enrollment.
+
+    If no verification deadline record exists for a course,
+    then that course does not have a deadline.  This means that users
+    can submit photos at any time.
+    """
+    class Meta(object):
+        app_label = "verify_student"
+
+    course_key = CourseKeyField(
+        max_length=255,
+        db_index=True,
+        unique=True,
+        help_text=ugettext_lazy(u"The course for which this deadline applies"),
+    )
+
+    deadline = models.DateTimeField(
+        help_text=ugettext_lazy(
+            u"The datetime after which users are no longer allowed "
+            u"to submit photos for verification."
+        )
+    )
+
+    # The system prefers to set this automatically based on default settings. But
+    # if the field is set manually we want a way to indicate that so we don't
+    # overwrite the manual setting of the field.
+    deadline_is_explicit = models.BooleanField(default=False)
+
+    # Maintain a history of changes to deadlines for auditing purposes
+    history = HistoricalRecords()
+
+    ALL_DEADLINES_CACHE_KEY = "verify_student.all_verification_deadlines"
+
+    @classmethod
+    def set_deadline(cls, course_key, deadline, is_explicit=False):
+        """
+        Configure the verification deadline for a course.
+
+        If `deadline` is `None`, then the course will have no verification
+        deadline.  In this case, users will be able to verify for the course
+        at any time.
+
+        Arguments:
+            course_key (CourseKey): Identifier for the course.
+            deadline (datetime or None): The verification deadline.
+
+        """
+        if deadline is None:
+            VerificationDeadline.objects.filter(course_key=course_key).delete()
+        else:
+            record, created = VerificationDeadline.objects.get_or_create(
+                course_key=course_key,
+                defaults={"deadline": deadline, "deadline_is_explicit": is_explicit}
+            )
+
+            if not created:
+                record.deadline = deadline
+                record.deadline_is_explicit = is_explicit
+                record.save()
+
+    @classmethod
+    def deadlines_for_courses(cls, course_keys):
+        """
+        Retrieve verification deadlines for particular courses.
+
+        Arguments:
+            course_keys (list): List of `CourseKey`s.
+
+        Returns:
+            dict: Map of course keys to datetimes (verification deadlines)
+
+        """
+        all_deadlines = cache.get(cls.ALL_DEADLINES_CACHE_KEY)
+        if all_deadlines is None:
+            all_deadlines = {
+                deadline.course_key: deadline.deadline
+                for deadline in VerificationDeadline.objects.all()
+            }
+            cache.set(cls.ALL_DEADLINES_CACHE_KEY, all_deadlines)
+
+        return {
+            course_key: all_deadlines[course_key]
+            for course_key in course_keys
+            if course_key in all_deadlines
+        }
+
+    @classmethod
+    def deadline_for_course(cls, course_key):
+        """
+        Retrieve the verification deadline for a particular course.
+
+        Arguments:
+            course_key (CourseKey): The identifier for the course.
+
+        Returns:
+            datetime or None
+
+        """
+        try:
+            deadline = cls.objects.get(course_key=course_key)
+            return deadline.deadline
+        except cls.DoesNotExist:
+            return None
+
+
+@receiver(models.signals.post_save, sender=VerificationDeadline)
+@receiver(models.signals.post_delete, sender=VerificationDeadline)
+def invalidate_deadline_caches(sender, **kwargs):  # pylint: disable=unused-argument
+    """Invalidate the cached verification deadline information. """
+    cache.delete(VerificationDeadline.ALL_DEADLINES_CACHE_KEY)
+
+
+class VerificationCheckpoint(models.Model):
+    """Represents a point at which a user is asked to re-verify his/her
+    identity.
+
+    Each checkpoint is uniquely identified by a
+    (course_id, checkpoint_location) tuple.
+    """
+    course_id = CourseKeyField(max_length=255, db_index=True)
+    checkpoint_location = models.CharField(max_length=255)
+    photo_verification = models.ManyToManyField(SoftwareSecurePhotoVerification)
+
+    class Meta(object):
+        app_label = "verify_student"
+        unique_together = ('course_id', 'checkpoint_location')
+
+    def __unicode__(self):
+        """
+        Unicode representation of the checkpoint.
+        """
+        return u"{checkpoint} in {course}".format(
+            checkpoint=self.checkpoint_name,
+            course=self.course_id
+        )
+
+    @lazy
+    def checkpoint_name(self):
+        """Lazy method for getting checkpoint name of reverification block.
+
+        Return location of the checkpoint if no related assessment found in
+        database.
+        """
+        checkpoint_key = UsageKey.from_string(self.checkpoint_location)
+        try:
+            checkpoint_name = modulestore().get_item(checkpoint_key).related_assessment
+        except ItemNotFoundError:
+            log.warning(
+                u"Verification checkpoint block with location '%s' and course id '%s' "
+                u"not found in database.", self.checkpoint_location, unicode(self.course_id)
+            )
+            checkpoint_name = self.checkpoint_location
+
+        return checkpoint_name
+
+    def add_verification_attempt(self, verification_attempt):
+        """Add the verification attempt in M2M relation of photo_verification.
+
+        Arguments:
+            verification_attempt(object): SoftwareSecurePhotoVerification object
+
+        Returns:
+            None
+        """
+        self.photo_verification.add(verification_attempt)   # pylint: disable=no-member
+
+    def get_user_latest_status(self, user_id):
+        """Get the status of the latest checkpoint attempt of the given user.
+
+        Args:
+            user_id(str): Id of user
+
+        Returns:
+            VerificationStatus object if found any else None
+        """
+        try:
+            return self.checkpoint_status.filter(user_id=user_id).latest()
+        except ObjectDoesNotExist:
+            return None
+
+    @classmethod
+    def get_or_create_verification_checkpoint(cls, course_id, checkpoint_location):
+        """
+        Get or create the verification checkpoint for given 'course_id' and
+        checkpoint name.
+
+        Arguments:
+            course_id (CourseKey): CourseKey
+            checkpoint_location (str): Verification checkpoint location
+
+        Raises:
+            IntegrityError if create fails due to concurrent create.
+
+        Returns:
+            VerificationCheckpoint object if exists otherwise None
+        """
+        with transaction.atomic():
+            checkpoint, __ = cls.objects.get_or_create(course_id=course_id, checkpoint_location=checkpoint_location)
+            return checkpoint
+
+
+class VerificationStatus(models.Model):
+    """This model is an append-only table that represents user status changes
+    during the verification process.
+
+    A verification status represents a user’s progress through the verification
+    process for a particular checkpoint.
+    """
+    SUBMITTED_STATUS = "submitted"
+    APPROVED_STATUS = "approved"
+    DENIED_STATUS = "denied"
+    ERROR_STATUS = "error"
+
+    VERIFICATION_STATUS_CHOICES = (
+        (SUBMITTED_STATUS, SUBMITTED_STATUS),
+        (APPROVED_STATUS, APPROVED_STATUS),
+        (DENIED_STATUS, DENIED_STATUS),
+        (ERROR_STATUS, ERROR_STATUS)
+    )
+
+    checkpoint = models.ForeignKey(VerificationCheckpoint, related_name="checkpoint_status")
+    user = models.ForeignKey(User)
+    status = models.CharField(choices=VERIFICATION_STATUS_CHOICES, db_index=True, max_length=32)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    response = models.TextField(null=True, blank=True)
+    error = models.TextField(null=True, blank=True)
+
+    class Meta(object):
+        app_label = "verify_student"
+        get_latest_by = "timestamp"
+        verbose_name = "Verification Status"
+        verbose_name_plural = "Verification Statuses"
+
+    @classmethod
+    def add_verification_status(cls, checkpoint, user, status):
+        """Create new verification status object.
+
+        Arguments:
+            checkpoint(VerificationCheckpoint): VerificationCheckpoint object
+            user(User): user object
+            status(str): Status from VERIFICATION_STATUS_CHOICES
+
+        Returns:
+            None
+        """
+        cls.objects.create(checkpoint=checkpoint, user=user, status=status)
+
+    @classmethod
+    def add_status_from_checkpoints(cls, checkpoints, user, status):
+        """Create new verification status objects for a user against the given
+        checkpoints.
+
+        Arguments:
+            checkpoints(list): list of VerificationCheckpoint objects
+            user(User): user object
+            status(str): Status from VERIFICATION_STATUS_CHOICES
+
+        Returns:
+            None
+        """
+        for checkpoint in checkpoints:
+            cls.objects.create(checkpoint=checkpoint, user=user, status=status)
+
+    @classmethod
+    def get_user_status_at_checkpoint(cls, user, course_key, location):
+        """
+        Get the user's latest status at the checkpoint.
+
+        Arguments:
+            user (User): The user whose status we are retrieving.
+            course_key (CourseKey): The identifier for the course.
+            location (UsageKey): The location of the checkpoint in the course.
+
+        Returns:
+            unicode or None
+
+        """
+        try:
+            return cls.objects.filter(
+                user=user,
+                checkpoint__course_id=course_key,
+                checkpoint__checkpoint_location=unicode(location),
+            ).latest().status
+        except cls.DoesNotExist:
+            return None
+
+    @classmethod
+    def get_user_attempts(cls, user_id, course_key, checkpoint_location):
+        """
+        Get re-verification attempts against a user for a given 'checkpoint'
+        and 'course_id'.
+
+        Arguments:
+            user_id (str): User Id string
+            course_key (str): A CourseKey of a course
+            checkpoint_location (str): Verification checkpoint location
+
+        Returns:
+            Count of re-verification attempts
+        """
+
+        return cls.objects.filter(
+            user_id=user_id,
+            checkpoint__course_id=course_key,
+            checkpoint__checkpoint_location=checkpoint_location,
+            status=cls.SUBMITTED_STATUS
+        ).count()
+
+    @classmethod
+    def get_location_id(cls, photo_verification):
+        """Get the location ID of reverification XBlock.
+
+        Args:
+            photo_verification(object): SoftwareSecurePhotoVerification object
+
+        Return:
+            Location Id of XBlock if any else empty string
+        """
+        try:
+            verification_status = cls.objects.filter(checkpoint__photo_verification=photo_verification).latest()
+            return verification_status.checkpoint.checkpoint_location
+        except cls.DoesNotExist:
+            return ""
+
+    @classmethod
+    def get_all_checkpoints(cls, user_id, course_key):
+        """Return dict of all the checkpoints with their status.
+        Args:
+            user_id(int): Id of user.
+            course_key(unicode): Unicode of course key
+
+        Returns:
+            dict: {checkpoint:status}
+        """
+        all_checks_points = cls.objects.filter(
+            user_id=user_id, checkpoint__course_id=course_key
+        )
+        check_points = {}
+        for check in all_checks_points:
+            check_points[check.checkpoint.checkpoint_location] = check.status
+
+        return check_points
+
+    @classmethod
+    def cache_key_name(cls, user_id, course_key):
+        """Return the name of the key to use to cache the current configuration
+        Args:
+            user_id(int): Id of user.
+            course_key(unicode): Unicode of course key
+
+        Returns:
+            Unicode cache key
+        """
+        return u"verification.{}.{}".format(user_id, unicode(course_key))
+
+
+@receiver(models.signals.post_save, sender=VerificationStatus)
+@receiver(models.signals.post_delete, sender=VerificationStatus)
+def invalidate_verification_status_cache(sender, instance, **kwargs):  # pylint: disable=unused-argument, invalid-name
+    """Invalidate the cache of VerificationStatus model. """
+
+    cache_key = VerificationStatus.cache_key_name(
+        instance.user.id,
+        unicode(instance.checkpoint.course_id)
+    )
+    cache.delete(cache_key)
+
+
+# DEPRECATED: this feature has been permanently enabled.
+# Once the application code has been updated in production,
+# this table can be safely deleted.
+class InCourseReverificationConfiguration(ConfigurationModel):
+    """Configure in-course re-verification.
+
+    Enable or disable in-course re-verification feature.
+    When this flag is disabled, the "in-course re-verification" feature
+    will be disabled.
+
+    When the flag is enabled, the "in-course re-verification" feature
+    will be enabled.
+    """
+    pass
+
+
+class IcrvStatusEmailsConfiguration(ConfigurationModel):
+    """Toggle in-course reverification (ICRV) status emails
+
+    Disabled by default. When disabled, ICRV status emails will not be sent.
+    When enabled, ICRV status emails are sent.
+    """
+    pass
+
+
+class SkippedReverification(models.Model):
+    """Model for tracking skipped Reverification of a user against a specific
+    course.
+
+    If a user skipped a Reverification checkpoint for a specific course then in
+    future that user cannot see the reverification link.
+    """
+    user = models.ForeignKey(User)
+    course_id = CourseKeyField(max_length=255, db_index=True)
+    checkpoint = models.ForeignKey(VerificationCheckpoint, related_name="skipped_checkpoint")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta(object):
+        app_label = "verify_student"
+        unique_together = (('user', 'course_id'),)
+
+    @classmethod
+    @transaction.atomic
+    def add_skipped_reverification_attempt(cls, checkpoint, user_id, course_id):
+        """Create skipped reverification object.
+
+        Arguments:
+            checkpoint(VerificationCheckpoint): VerificationCheckpoint object
+            user_id(str): User Id of currently logged in user
+            course_id(CourseKey): CourseKey
+
+        Returns:
+            None
+        """
+        cls.objects.create(checkpoint=checkpoint, user_id=user_id, course_id=course_id)
+
+    @classmethod
+    def check_user_skipped_reverification_exists(cls, user_id, course_id):
+        """Check existence of a user's skipped re-verification attempt for a
+        specific course.
+
+        Arguments:
+            user_id(str): user id
+            course_id(CourseKey): CourseKey
+
+        Returns:
+            Boolean
+        """
+        has_skipped = cls.objects.filter(user_id=user_id, course_id=course_id).exists()
+        return has_skipped
+
+    @classmethod
+    def cache_key_name(cls, user_id, course_key):
+        """Return the name of the key to use to cache the current configuration
+        Arguments:
+            user(User): user object
+            course_key(CourseKey): CourseKey
+
+        Returns:
+            string: cache key name
+        """
+        return u"skipped_reverification.{}.{}".format(user_id, unicode(course_key))
+
+
+@receiver(models.signals.post_save, sender=SkippedReverification)
+@receiver(models.signals.post_delete, sender=SkippedReverification)
+def invalidate_skipped_verification_cache(sender, instance, **kwargs):  # pylint: disable=unused-argument, invalid-name
+    """Invalidate the cache of skipped verification model. """
+
+    cache_key = SkippedReverification.cache_key_name(
+        instance.user.id,
+        unicode(instance.course_id)
+    )
+    cache.delete(cache_key)

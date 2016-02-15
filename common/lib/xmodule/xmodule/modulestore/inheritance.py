@@ -4,15 +4,18 @@ Support for inheritance of fields down an XBlock hierarchy.
 from __future__ import absolute_import
 
 from datetime import datetime
+from django.conf import settings
 from pytz import UTC
+
 from xmodule.partitions.partitions import UserPartition
 from xblock.fields import Scope, Boolean, String, Float, XBlockMixin, Dict, Integer, List
 from xblock.runtime import KeyValueStore, KvsFieldData
 from xmodule.fields import Date, Timedelta
-from django.conf import settings
+from ..course_metadata_utils import DEFAULT_START_DATE
 
 
 # Make '_' a no-op so we can scrape strings
+# Using lambda instead of `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
 
 
@@ -36,7 +39,7 @@ class InheritanceMixin(XBlockMixin):
     )
     start = Date(
         help="Start time when this module is visible",
-        default=datetime(2030, 1, 1, tzinfo=UTC),
+        default=DEFAULT_START_DATE,
         scope=Scope.settings
     )
     due = Date(
@@ -44,26 +47,9 @@ class InheritanceMixin(XBlockMixin):
         help=_("Enter the default date by which problems are due."),
         scope=Scope.settings,
     )
-    extended_due = Date(
-        help="Date that this problem is due by for a particular student. This "
-             "can be set by an instructor, and will override the global due "
-             "date if it is set to a date that is later than the global due "
-             "date.",
-        default=None,
-        scope=Scope.user_state,
-    )
     visible_to_staff_only = Boolean(
         help=_("If true, can be seen only by course staff, regardless of start date."),
         default=False,
-        scope=Scope.settings,
-    )
-    group_access = Dict(
-        help="A dictionary that maps which groups can be shown this block. The keys "
-             "are group configuration ids and the values are a list of group IDs. "
-             "If there is no key for a group configuration or if the list of group IDs "
-             "is empty then the block is considered visible to all. Note that this "
-             "field is ignored if the block is visible_to_staff_only.",
-        default={},
         scope=Scope.settings,
     )
     course_edit_method = String(
@@ -99,15 +85,33 @@ class InheritanceMixin(XBlockMixin):
         help="Amount of time after the due date that submissions will be accepted",
         scope=Scope.settings,
     )
+    group_access = Dict(
+        help=_("Enter the ids for the content groups this problem belongs to."),
+        scope=Scope.settings,
+    )
+
     showanswer = String(
         display_name=_("Show Answer"),
-        help=_("Specify when the Show Answer button appears for each problem. Valid values are \"always\", \"answered\", \"attempted\", \"closed\", \"finished\", \"past_due\", and \"never\"."),
+        help=_(
+            # Translators: DO NOT translate the words in quotes here, they are
+            # specific words for the acceptable values.
+            'Specify when the Show Answer button appears for each problem. '
+            'Valid values are "always", "answered", "attempted", "closed", '
+            '"finished", "past_due", "correct_or_past_due", and "never".'
+        ),
         scope=Scope.settings,
         default="finished",
     )
     rerandomize = String(
         display_name=_("Randomization"),
-        help=_("Specify how often variable values in a problem are randomized when a student loads the problem. Valid values are \"always\", \"onreset\", \"never\", and \"per_student\". This setting only applies to problems that have randomly generated numeric values."),
+        help=_(
+            # Translators: DO NOT translate the words in quotes here, they are
+            # specific words for the acceptable values.
+            'Specify the default for how often variable values in a problem are randomized. '
+            'This setting should be set to "never" unless you plan to provide a Python '
+            'script to identify and randomize values in most of the problems in your course. '
+            'Valid values are "always", "onreset", "never", and "per_student".'
+        ),
         scope=Scope.settings,
         default="never",
     )
@@ -162,15 +166,56 @@ class InheritanceMixin(XBlockMixin):
         default=True,
         scope=Scope.settings
     )
+    video_bumper = Dict(
+        display_name=_("Video Pre-Roll"),
+        help=_(
+            "Identify a video, 5-10 seconds in length, to play before course videos. Enter the video ID from "
+            "the Video Uploads page and one or more transcript files in the following format: {format}. "
+            "For example, an entry for a video with two transcripts looks like this: {example}"
+        ).format(
+            format='{"video_id": "ID", "transcripts": {"language": "/static/filename.srt"}}',
+            example=(
+                '{'
+                '"video_id": "77cef264-d6f5-4cf2-ad9d-0178ab8c77be", '
+                '"transcripts": {"en": "/static/DemoX-D01_1.srt", "uk": "/static/DemoX-D01_1_uk.srt"}'
+                '}'
+            ),
+        ),
+        scope=Scope.settings
+    )
 
     reset_key = "DEFAULT_SHOW_RESET_BUTTON"
     default_reset_button = getattr(settings, reset_key) if hasattr(settings, reset_key) else False
     show_reset_button = Boolean(
         display_name=_("Show Reset Button for Problems"),
-        help=_("Enter true or false. If true, problems in the course default to always displaying a 'Reset' button. You can "
-               "override this in each problem's settings. All existing problems are affected when this course-wide setting is changed."),
+        help=_(
+            "Enter true or false. If true, problems in the course default to always displaying a 'Reset' button. "
+            "You can override this in each problem's settings. All existing problems are affected when "
+            "this course-wide setting is changed."
+        ),
         scope=Scope.settings,
         default=default_reset_button
+    )
+    edxnotes = Boolean(
+        display_name=_("Enable Student Notes"),
+        help=_("Enter true or false. If true, students can use the Student Notes feature."),
+        default=False,
+        scope=Scope.settings
+    )
+    edxnotes_visibility = Boolean(
+        display_name="Student Notes Visibility",
+        help=_("Indicates whether Student Notes are visible in the course. "
+               "Students can also show or hide their notes in the courseware."),
+        default=True,
+        scope=Scope.user_info
+    )
+
+    in_entrance_exam = Boolean(
+        display_name=_("Tag this module as part of an Entrance Exam section"),
+        help=_("Enter true or false. If true, answer submissions for problem modules will be "
+               "considered in the Entrance Exam scoring/gating algorithm."),
+        scope=Scope.settings,
+        default=False
     )
 
 
@@ -211,8 +256,8 @@ def inherit_metadata(descriptor, inherited_data):
 
 def own_metadata(module):
     """
-    Return a dictionary that contains only non-inherited field keys,
-    mapped to their serialized values
+    Return a JSON-friendly dictionary that contains only non-inherited field
+    keys, mapped to their serialized values
     """
     return module.get_explicitly_set_fields_by_scope(Scope.settings)
 
@@ -283,6 +328,8 @@ class InheritanceKeyValueStore(KeyValueStore):
 
     def default(self, key):
         """
-        Check to see if the default should be from inheritance rather than from the field's global default
+        Check to see if the default should be from inheritance. If not
+        inheriting, this will raise KeyError which will cause the caller to use
+        the field's global default.
         """
         return self.inherited_settings[key.field_name]

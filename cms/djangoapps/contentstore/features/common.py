@@ -3,7 +3,7 @@
 
 import os
 from lettuce import world, step
-from nose.tools import assert_true, assert_in  # pylint: disable=no-name-in-module
+from nose.tools import assert_true, assert_in
 from django.conf import settings
 
 from student.roles import CourseStaffRole, CourseInstructorRole, GlobalStaff
@@ -92,7 +92,7 @@ def press_the_notification_button(_step, name):
     # the "Save" button at the UI level.
     # Instead, we use JavaScript to reliably click
     # the button.
-    btn_css = 'div#page-notification a.action-%s' % name.lower()
+    btn_css = 'div#page-notification button.action-%s' % name.lower()
     world.trigger_event(btn_css, event='focus')
     world.browser.execute_script("$('{}').click()".format(btn_css))
     world.wait_for_ajax_complete()
@@ -171,7 +171,7 @@ def log_into_studio(
     world.log_in(username=uname, password=password, email=email, name=name)
     # Navigate to the studio dashboard
     world.visit('/')
-    assert_in(uname, world.css_text('h2.title', timeout=10))
+    assert_in(uname, world.css_text('span.account-username', timeout=10))
 
 
 def add_course_author(user, course):
@@ -284,7 +284,7 @@ def button_disabled(step, value):
 def _do_studio_prompt_action(intent, action):
     """
     Wait for a studio prompt to appear and press the specified action button
-    See cms/static/js/views/feedback_prompt.js for implementation
+    See common/js/components/views/feedback_prompt.js for implementation
     """
     assert intent in [
         'warning',
@@ -299,7 +299,7 @@ def _do_studio_prompt_action(intent, action):
 
     world.wait_for_present('div.wrapper-prompt.is-shown#prompt-{}'.format(intent))
 
-    action_css = 'li.nav-item > a.action-{}'.format(action)
+    action_css = 'li.nav-item > button.action-{}'.format(action)
     world.trigger_event(action_css, event='focus')
     world.browser.execute_script("$('{}').click()".format(action_css))
 
@@ -348,9 +348,19 @@ def attach_file(filename, sub_path):
 
 
 def upload_file(filename, sub_path=''):
+    # The file upload dialog is a faux modal, a div that takes over the display
     attach_file(filename, sub_path)
-    button_css = '.wrapper-modal-window-assetupload .action-upload'
+    modal_css = 'div.wrapper-modal-window-assetupload'
+    button_css = '{} .action-upload'.format(modal_css)
     world.css_click(button_css)
+
+    # Clicking the Upload button triggers an AJAX POST.
+    world.wait_for_ajax_complete()
+
+    # The modal stays up with a "File uploaded succeeded" confirmation message, then goes away.
+    # It should take under 2 seconds, so wait up to 10.
+    # Note that is_css_not_present will return as soon as the element is gone.
+    assert world.is_css_not_present(modal_css, wait_time=10)
 
 
 @step(u'"([^"]*)" logs in$')

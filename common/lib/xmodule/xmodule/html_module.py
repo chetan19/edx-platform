@@ -1,29 +1,41 @@
 import copy
+from datetime import datetime
 from fs.errors import ResourceNotFoundError
 import logging
-import os
-import sys
 from lxml import etree
-from path import path
-
+import os
+from path import Path as path
 from pkg_resources import resource_string
-from xblock.fields import Scope, String, Boolean, List
+import re
+import sys
+import textwrap
+
+import dogstats_wrapper as dog_stats_api
+from xmodule.util.misc import escape_html_characters
+from xmodule.contentstore.content import StaticContent
 from xmodule.editing_module import EditingDescriptor
+from xmodule.edxnotes_utils import edxnotes
 from xmodule.html_checker import check_html
 from xmodule.stringify import stringify_children
-from xmodule.x_module import XModule
+from xmodule.x_module import XModule, DEPRECATION_VSCOMPAT_EVENT
 from xmodule.xml_module import XmlDescriptor, name_to_pathname
-import textwrap
-from xmodule.contentstore.content import StaticContent
 from xblock.core import XBlock
+from xblock.fields import Scope, String, Boolean, List
+from xblock.fragment import Fragment
 
 log = logging.getLogger("edx.courseware")
 
-# Make '_' a no-op so we can scrape strings
+# Make '_' a no-op so we can scrape strings. Using lambda instead of
+#  `django.utils.translation.ugettext_noop` because Django cannot be imported in this file
 _ = lambda text: text
 
 
-class HtmlFields(object):
+class HtmlBlock(object):
+    """
+    This will eventually subclass XBlock and merge HtmlModule and HtmlDescriptor
+    into one. For now, it's a place to put the pieces that are already sharable
+    between the two (field information and XBlock handlers).
+    """
     display_name = String(
         display_name=_("Display Name"),
         help=_("This name appears in the horizontal navigation at the top of the page."),
@@ -33,14 +45,20 @@ class HtmlFields(object):
         default=_("Text")
     )
     data = String(help=_("Html contents to display for this module"), default=u"", scope=Scope.content)
-    source_code = String(help=_("Source code for LaTeX documents. This feature is not well-supported."), scope=Scope.settings)
+    source_code = String(
+        help=_("Source code for LaTeX documents. This feature is not well-supported."),
+        scope=Scope.settings
+    )
     use_latex_compiler = Boolean(
         help=_("Enable LaTeX templates?"),
         default=False,
         scope=Scope.settings
     )
     editor = String(
-        help=_("Select Visual to enter content and have the editor automatically create the HTML. Select Raw to edit HTML directly. If you change this setting, you must save the component and then re-open it for editing."),
+        help=_(
+            "Select Visual to enter content and have the editor automatically create the HTML. Select Raw to edit "
+            "HTML directly. If you change this setting, you must save the component and then re-open it for editing."
+        ),
         display_name=_("Editor"),
         default="visual",
         values=[
@@ -50,8 +68,28 @@ class HtmlFields(object):
         scope=Scope.settings
     )
 
+    @XBlock.supports("multi_device")
+    def student_view(self, _context):
+        """
+        Return a fragment that contains the html for the student view
+        """
+        return Fragment(self.get_html())
 
-class HtmlModule(HtmlFields, XModule):
+    def get_html(self):
+        """ Returns html required for rendering XModule. """
+
+        # When we switch this to an XBlock, we can merge this with student_view,
+        # but for now the XModule mixin requires that this method be defined.
+        # pylint: disable=no-member
+        if self.system.anonymous_student_id:
+            return self.data.replace("%%USER_ID%%", self.system.anonymous_student_id)
+        return self.data
+
+
+class HtmlModuleMixin(HtmlBlock, XModule):
+    """
+    Attributes and methods used by HtmlModules internally.
+    """
     js = {
         'coffee': [
             resource_string(__name__, 'js/src/javascript_loader.coffee'),
@@ -66,13 +104,15 @@ class HtmlModule(HtmlFields, XModule):
     js_module_name = "HTMLModule"
     css = {'scss': [resource_string(__name__, 'css/html/display.scss')]}
 
-    def get_html(self):
-        if self.system.anonymous_student_id:
-            return self.data.replace("%%USER_ID%%", self.system.anonymous_student_id)
-        return self.data
+
+@edxnotes
+class HtmlModule(HtmlModuleMixin):
+    """
+    Module for putting raw html in a course
+    """
 
 
-class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
+class HtmlDescriptor(HtmlBlock, XmlDescriptor, EditingDescriptor):  # pylint: disable=abstract-method
     """
     Module for putting raw html in a course
     """
@@ -80,6 +120,7 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
     module_class = HtmlModule
     filename_extension = "xml"
     template_dir_name = "html"
+    show_in_read_only_mode = True
 
     js = {'coffee': [resource_string(__name__, 'js/src/html/edit.coffee')]}
     js_module_name = "HTMLEditingDescriptor"
@@ -88,22 +129,31 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
     # VS[compat] TODO (cpennington): Delete this method once all fall 2012 course
     # are being edited in the cms
     @classmethod
-    def backcompat_paths(cls, path):
-        if path.endswith('.html.xml'):
-            path = path[:-9] + '.html'  # backcompat--look for html instead of xml
-        if path.endswith('.html.html'):
-            path = path[:-5]  # some people like to include .html in filenames..
+    def backcompat_paths(cls, filepath):
+        """
+        Get paths for html and xml files.
+        """
+
+        dog_stats_api.increment(
+            DEPRECATION_VSCOMPAT_EVENT,
+            tags=["location:html_descriptor_backcompat_paths"]
+        )
+
+        if filepath.endswith('.html.xml'):
+            filepath = filepath[:-9] + '.html'  # backcompat--look for html instead of xml
+        if filepath.endswith('.html.html'):
+            filepath = filepath[:-5]  # some people like to include .html in filenames..
         candidates = []
-        while os.sep in path:
-            candidates.append(path)
-            _, _, path = path.partition(os.sep)
+        while os.sep in filepath:
+            candidates.append(filepath)
+            _, _, filepath = filepath.partition(os.sep)
 
         # also look for .html versions instead of .xml
-        nc = []
+        new_candidates = []
         for candidate in candidates:
             if candidate.endswith('.xml'):
-                nc.append(candidate[:-4] + '.html')
-        return candidates + nc
+                new_candidates.append(candidate[:-4] + '.html')
+        return candidates + new_candidates
 
     @classmethod
     def filter_templates(cls, template, course):
@@ -113,7 +163,7 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
         Show them only if use_latex_compiler is set to True in
         course settings.
         """
-        return ('latex' not in template['template_id'] or course.use_latex_compiler)
+        return 'latex' not in template['template_id'] or course.use_latex_compiler
 
     def get_context(self):
         """
@@ -136,7 +186,7 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
     # snippets that will be included in the middle of pages.
 
     @classmethod
-    def load_definition(cls, xml_object, system, location):
+    def load_definition(cls, xml_object, system, location, id_generator):
         '''Load a descriptor from the specified xml_object:
 
         If there is a filename attribute, load it as a string, and
@@ -145,6 +195,12 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
         If there is not a filename attribute, the definition is the body
         of the xml_object, without the root tag (do not want <html> in the
         middle of a page)
+
+        Args:
+            xml_object: an lxml.etree._Element containing the definition to load
+            system: the modulestore system or runtime which caches data
+            location: the usage id for the block--used to compute the filename if none in the xml_object
+            id_generator: used by other impls of this method to generate the usage_id
         '''
         filename = xml_object.get('filename')
         if filename is None:
@@ -172,6 +228,12 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
             # again in the correct format.  This should go away once the CMS is
             # online and has imported all current (fall 2012) courses from xml
             if not system.resources_fs.exists(filepath):
+
+                dog_stats_api.increment(
+                    DEPRECATION_VSCOMPAT_EVENT,
+                    tags=["location:html_descriptor_load_definition"]
+                )
+
                 candidates = cls.backcompat_paths(filepath)
                 # log.debug("candidates = {0}".format(candidates))
                 for candidate in candidates:
@@ -180,8 +242,8 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
                         break
 
             try:
-                with system.resources_fs.open(filepath) as file:
-                    html = file.read().decode('utf-8')
+                with system.resources_fs.open(filepath) as infile:
+                    html = infile.read().decode('utf-8')
                     # Log a warning if we can't parse the file, but don't error
                     if not check_html(html) and len(html) > 0:
                         msg = "Couldn't parse html in {0}, content = {1}".format(filepath, html)
@@ -230,9 +292,38 @@ class HtmlDescriptor(HtmlFields, XmlDescriptor, EditingDescriptor):
 
     @property
     def non_editable_metadata_fields(self):
+        """
+        `use_latex_compiler` should not be editable in the Studio settings editor.
+        """
         non_editable_fields = super(HtmlDescriptor, self).non_editable_metadata_fields
         non_editable_fields.append(HtmlDescriptor.use_latex_compiler)
         return non_editable_fields
+
+    def index_dictionary(self):
+        xblock_body = super(HtmlDescriptor, self).index_dictionary()
+        # Removing script and style
+        html_content = re.sub(
+            re.compile(
+                r"""
+                    <script>.*?</script> |
+                    <style>.*?</style>
+                """,
+                re.DOTALL |
+                re.VERBOSE),
+            "",
+            self.data
+        )
+        html_content = escape_html_characters(html_content)
+        html_body = {
+            "html_content": html_content,
+            "display_name": self.display_name,
+        }
+        if "content" in xblock_body:
+            xblock_body["content"].update(html_body)
+        else:
+            xblock_body["content"] = html_body
+        xblock_body["content_type"] = "Text"
+        return xblock_body
 
 
 class AboutFields(object):
@@ -249,7 +340,7 @@ class AboutFields(object):
 
 
 @XBlock.tag("detached")
-class AboutModule(AboutFields, HtmlModule):
+class AboutModule(AboutFields, HtmlModuleMixin):
     """
     Overriding defaults but otherwise treated as HtmlModule.
     """
@@ -286,7 +377,7 @@ class StaticTabFields(object):
 
 
 @XBlock.tag("detached")
-class StaticTabModule(StaticTabFields, HtmlModule):
+class StaticTabModule(StaticTabFields, HtmlModuleMixin):
     """
     Supports the field overrides
     """
@@ -320,13 +411,42 @@ class CourseInfoFields(object):
 
 
 @XBlock.tag("detached")
-class CourseInfoModule(CourseInfoFields, HtmlModule):
+class CourseInfoModule(CourseInfoFields, HtmlModuleMixin):
     """
     Just to support xblock field overrides
     """
     # statuses
     STATUS_VISIBLE = 'visible'
     STATUS_DELETED = 'deleted'
+    TEMPLATE_DIR = 'courseware'
+
+    @XBlock.supports("multi_device")
+    def student_view(self, _context):
+        """
+        Return a fragment that contains the html for the student view
+        """
+        return Fragment(self.get_html())
+
+    def get_html(self):
+        """ Returns html required for rendering XModule. """
+
+        # When we switch this to an XBlock, we can merge this with student_view,
+        # but for now the XModule mixin requires that this method be defined.
+        # pylint: disable=no-member
+        if self.data != "":
+            if self.system.anonymous_student_id:
+                return self.data.replace("%%USER_ID%%", self.system.anonymous_student_id)
+            return self.data
+        else:
+            course_updates = [item for item in self.items if item.get('status') == self.STATUS_VISIBLE]
+            course_updates.sort(key=lambda item: datetime.strptime(item['date'], '%B %d, %Y'), reverse=True)
+
+            context = {
+                'visible_updates': course_updates[:3],
+                'hidden_updates': course_updates[3:],
+            }
+
+            return self.system.render_template("{0}/course_updates.html".format(self.TEMPLATE_DIR), context)
 
 
 @XBlock.tag("detached")

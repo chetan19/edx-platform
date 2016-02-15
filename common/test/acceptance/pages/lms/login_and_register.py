@@ -42,6 +42,7 @@ class RegisterPage(PageObject):
         Fill in registration info.
         `email`, `password`, `username`, and `full_name` are the user's credentials.
         """
+        self.wait_for_element_visibility('input#email', 'Email field is shown')
         self.q(css='input#email').fill(email)
         self.q(css='input#password').fill(password)
         self.q(css='input#username').fill(username)
@@ -62,6 +63,50 @@ class RegisterPage(PageObject):
         return dashboard
 
 
+class ResetPasswordPage(PageObject):
+    """Initialize the page.
+
+        Arguments:
+            browser (Browser): The browser instance.
+    """
+    url = BASE_URL + "/login#forgot-password-modal"
+
+    def __init__(self, browser):
+        super(ResetPasswordPage, self).__init__(browser)
+
+    def is_browser_on_page(self):
+        return (
+            self.q(css="#login-anchor").is_present() and
+            self.q(css="#password-reset-anchor").is_present()
+        )
+
+    def is_form_visible(self):
+        return (
+            not self.q(css="#login-anchor").visible and
+            self.q(css="#password-reset-form").visible
+        )
+
+    def fill_password_reset_form(self, email):
+        """
+        Fill in the form and submit it
+        """
+        self.wait_for_element_visibility('#password-reset-email', 'Reset Email field is shown')
+        self.q(css="#password-reset-email").fill(email)
+        self.q(css="button.js-reset").click()
+
+    def is_success_visible(self, selector):
+        """
+        Check element is visible
+        """
+        self.wait_for_element_visibility(selector, 'Success div is shown')
+
+    def get_success_message(self):
+        """
+        Return a success message displayed to the user
+        """
+        return self.q(css=".submission-success h4").text
+
+
 class CombinedLoginAndRegisterPage(PageObject):
     """Interact with combined login and registration page.
 
@@ -70,7 +115,9 @@ class CombinedLoginAndRegisterPage(PageObject):
     in the bok choy settings.
 
     When enabled, the new page is available from either
-    `/account/login` or `/account/register`.
+    `/login` or `/register`; the new page is also served at
+    `/account/login/` or `/account/register/`, where it was
+    available for a time during an A/B test.
 
     Users can reach this page while attempting to enroll
     in a course, in which case users will be auto-enrolled
@@ -100,7 +147,7 @@ class CombinedLoginAndRegisterPage(PageObject):
     @property
     def url(self):
         """Return the URL for the combined login/registration page. """
-        url = "{base}/account/{login_or_register}".format(
+        url = "{base}/{login_or_register}".format(
             base=BASE_URL,
             login_or_register=self._start_page
         )
@@ -120,8 +167,8 @@ class CombinedLoginAndRegisterPage(PageObject):
     def is_browser_on_page(self):
         """Check whether the combined login/registration page has loaded. """
         return (
-            self.q(css="#register-option").is_present() and
-            self.q(css="#login-option").is_present() and
+            self.q(css="#login-anchor").is_present() and
+            self.q(css="#register-anchor").is_present() and
             self.current_form is not None
         )
 
@@ -130,7 +177,10 @@ class CombinedLoginAndRegisterPage(PageObject):
         old_form = self.current_form
 
         # Toggle the form
-        self.q(css=".form-toggle:not(:checked)").click()
+        if old_form == "login":
+            self.q(css=".form-toggle[data-type='register']").click()
+        else:
+            self.q(css=".form-toggle[data-type='login']").click()
 
         # Wait for the form to change before returning
         EmptyPromise(
@@ -138,7 +188,10 @@ class CombinedLoginAndRegisterPage(PageObject):
             "Finish toggling to the other form"
         ).fulfill()
 
-    def register(self, email="", password="", username="", full_name="", country="", terms_of_service=False):
+    def register(
+            self, email="", password="", username="", full_name="", country="", favorite_movie="",
+            terms_of_service=False
+    ):
         """Fills in and submits the registration form.
 
         Requires that the "register" form is visible.
@@ -156,19 +209,26 @@ class CombinedLoginAndRegisterPage(PageObject):
 
         """
         # Fill in the form
-        self.q(css="#register-email").fill(email)
-        self.q(css="#register-password").fill(password)
-        self.q(css="#register-username").fill(username)
-        self.q(css="#register-name").fill(full_name)
+        self.wait_for_element_visibility('#register-email', 'Email field is shown')
+        if email:
+            self.q(css="#register-email").fill(email)
+        if full_name:
+            self.q(css="#register-name").fill(full_name)
+        if username:
+            self.q(css="#register-username").fill(username)
+        if password:
+            self.q(css="#register-password").fill(password)
         if country:
             self.q(css="#register-country option[value='{country}']".format(country=country)).click()
-        if (terms_of_service):
+        if favorite_movie:
+            self.q(css="#register-favorite_movie").fill(favorite_movie)
+        if terms_of_service:
             self.q(css="#register-honor_code").click()
 
         # Submit it
         self.q(css=".register-button").click()
 
-    def login(self, email="", password="", remember_me=True):
+    def login(self, email="", password=""):
         """Fills in and submits the login form.
 
         Requires that the "login" form is visible.
@@ -179,17 +239,25 @@ class CombinedLoginAndRegisterPage(PageObject):
         Keyword Arguments:
             email (unicode): The user's email address.
             password (unicode): The user's password.
-            remember_me (boolean): If True, check the "remember me" box.
 
         """
         # Fill in the form
+        self.wait_for_element_visibility('#login-email', 'Email field is shown')
         self.q(css="#login-email").fill(email)
         self.q(css="#login-password").fill(password)
-        if remember_me:
-            self.q(css="#login-remember").click()
 
         # Submit it
         self.q(css=".login-button").click()
+
+    def click_third_party_dummy_provider(self):
+        """Clicks on the Dummy third party provider login button.
+
+        Requires that the "login" form is visible.
+        This does NOT wait for the ensuing page[s] to load.
+        Only the "Dummy" provider is used for bok choy because it is the only
+        one that doesn't send traffic to external servers.
+        """
+        self.q(css="button.{}-oa2-dummy".format(self.current_form)).click()
 
     def password_reset(self, email):
         """Navigates to, fills in, and submits the password reset form.
@@ -212,10 +280,13 @@ class CombinedLoginAndRegisterPage(PageObject):
         ).fulfill()
 
         # Fill in the form
+        self.wait_for_element_visibility('#password-reset-email', 'Email field is shown')
         self.q(css="#password-reset-email").fill(email)
 
         # Submit it
         self.q(css="button.js-reset").click()
+
+        return CombinedLoginAndRegisterPage(self.browser).wait_for_page()
 
     @property
     @unguarded
@@ -233,8 +304,25 @@ class CombinedLoginAndRegisterPage(PageObject):
             return "register"
         elif self.q(css=".login-button").visible:
             return "login"
-        elif self.q(css=".js-reset").visible or self.q(css=".js-reset-success").visible:
+        elif self.q(css=".js-reset").visible:
             return "password-reset"
+        elif self.q(css=".proceed-button").visible:
+            return "hinted-login"
+
+    @property
+    def email_value(self):
+        """ Current value of the email form field """
+        return self.q(css="#register-email").attrs('value')[0]
+
+    @property
+    def full_name_value(self):
+        """ Current value of the full_name form field """
+        return self.q(css="#register-name").attrs('value')[0]
+
+    @property
+    def username_value(self):
+        """ Current value of the username form field """
+        return self.q(css="#register-username").attrs('value')[0]
 
     @property
     def errors(self):
@@ -244,6 +332,7 @@ class CombinedLoginAndRegisterPage(PageObject):
     def wait_for_errors(self):
         """Wait for errors to be visible, then return them. """
         def _check_func():
+            """Return success status and any errors that occurred."""
             errors = self.errors
             return (bool(errors), errors)
         return Promise(_check_func, "Errors are visible").fulfill()
@@ -257,6 +346,25 @@ class CombinedLoginAndRegisterPage(PageObject):
     def wait_for_success(self):
         """Wait for a success message to be visible, then return it."""
         def _check_func():
+            """Return success status and any errors that occurred."""
             success = self.success
             return (bool(success), success)
         return Promise(_check_func, "Success message is visible").fulfill()
+
+    @unguarded  # Because we go from this page -> temporary page -> this page again when testing the Dummy provider
+    def wait_for_auth_status_message(self):
+        """Wait for a status message to be visible following third_party registration, then return it."""
+        def _check_func():
+            """Return third party auth status notice message."""
+            for selector in ['.already-authenticated-msg p', '.status p']:
+                msg_element = self.q(css=selector)
+                if msg_element.visible:
+                    return (True, msg_element.text[0])
+            return (False, None)
+        return Promise(_check_func, "Result of third party auth is visible").fulfill()
+
+    @property
+    def hinted_login_prompt(self):
+        """Get the message displayed to the user on the hinted-login form"""
+        if self.q(css=".wrapper-other-login .instructions").visible:
+            return self.q(css=".wrapper-other-login .instructions").text[0]

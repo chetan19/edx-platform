@@ -1,16 +1,11 @@
 """
 Useful django models for implementing XBlock infrastructure in django.
 """
-
 import warnings
 
 from django.db import models
 from django.core.exceptions import ValidationError
-from opaque_keys.edx.locations import SlashSeparatedCourseKey, Location
 from opaque_keys.edx.keys import CourseKey, UsageKey, BlockTypeKey
-from opaque_keys.edx.locator import Locator
-
-from south.modelsinspector import add_introspection_rules
 
 
 class NoneToEmptyManager(models.Manager):
@@ -25,7 +20,10 @@ class NoneToEmptyManager(models.Manager):
         """
         super(NoneToEmptyManager, self).__init__()
 
-    def get_query_set(self):
+    def get_queryset(self):
+        """
+        Returns the result of NoneToEmptyQuerySet instead of a regular QuerySet.
+        """
         return NoneToEmptyQuerySet(self.model, using=self._db)
 
 
@@ -99,7 +97,8 @@ class OpaqueKeyField(models.CharField):
         if value is self.Empty or value is None:
             return None
 
-        assert isinstance(value, (basestring, self.KEY_CLASS))
+        assert isinstance(value, (basestring, self.KEY_CLASS)), \
+            "%s is not an instance of basestring or %s" % (value, self.KEY_CLASS)
         if value == '':
             # handle empty string for models being created w/o fields populated
             return None
@@ -123,7 +122,7 @@ class OpaqueKeyField(models.CharField):
         if value is self.Empty or value is None:
             return ''  # CharFields should use '' as their empty value, rather than None
 
-        assert isinstance(value, self.KEY_CLASS)
+        assert isinstance(value, self.KEY_CLASS), "%s is not an instance of %s" % (value, self.KEY_CLASS)
         return unicode(_strip_value(value))
 
     def validate(self, value, model_instance):
@@ -173,8 +172,3 @@ class BlockTypeKeyField(OpaqueKeyField):
     """
     description = "A BlockTypeKey object, saved to the DB in the form of a string."
     KEY_CLASS = BlockTypeKey
-
-
-add_introspection_rules([], [r"^xmodule_django\.models\.CourseKeyField"])
-add_introspection_rules([], [r"^xmodule_django\.models\.LocationKeyField"])
-add_introspection_rules([], [r"^xmodule_django\.models\.UsageKeyField"])

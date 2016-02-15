@@ -16,7 +16,7 @@ div.syllabus {
     table-layout: auto;
     text-align: left;
 
-    margin: 10px 0;
+    margin: ($baseline/2) 0;
 
     thead {
       font-weight: bold;
@@ -27,7 +27,7 @@ div.syllabus {
       td {
         padding-top: 15px !important;
       }
-    } 
+    }
 
     td {
       border: none !important;
@@ -50,9 +50,9 @@ div.syllabus {
 
       &.week_separator {
         padding: 0px !important;
-        
+
         hr {
-          margin: 10px;
+          margin: ($baseline/2);
         }
       }
     }

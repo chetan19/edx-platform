@@ -1,8 +1,7 @@
 # pylint: disable=missing-docstring
-# pylint: disable=redefined-outer-name
 
 from lettuce import world, steps
-from nose.tools import assert_in, assert_true  # pylint: disable=no-name-in-module
+from nose.tools import assert_in, assert_true
 
 from common import i_am_registered_for_the_course, visit_scenario_item
 from problems_setup import add_problem_to_course, answer_problem
@@ -74,7 +73,7 @@ class ConditionalSteps(object):
 
         if not_attempted is None:
             answer_problem(self.COURSE_NUM, 'string', True)
-            world.css_click("input.check")
+            world.css_click("button.check")
 
     def when_i_view_the_conditional(self, step):
         r'I view the conditional$'
@@ -92,7 +91,12 @@ class ConditionalSteps(object):
             assert_true(world.css_visible('.hidden-contents'))
         else:
             assert_true(world.is_css_not_present('.hidden-contents'))
-            assert_true(world.css_contains_text('.conditional-message', 'must be attempted before this will become visible.'))  # sarina
+            assert_true(
+                world.css_contains_text(
+                    '.conditional-message',
+                    'must be attempted before this will become visible.'
+                )
+            )
 
     def answer_poll(self, step, answer):
         r' I answer the conditioned poll "([^"]*)"$'

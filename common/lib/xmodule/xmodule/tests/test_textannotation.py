@@ -31,6 +31,8 @@ class TextAnnotationModuleTestCase(unittest.TestCase):
         """
             Makes sure that the Module is declared and mocked with the sample xml above.
         """
+        super(TextAnnotationModuleTestCase, self).setUp()
+
         # return anything except None to test LMS
         def test_real_user(useless):
             useless_user = Mock(email='fake@fake.com', id=useless)
@@ -70,8 +72,19 @@ class TextAnnotationModuleTestCase(unittest.TestCase):
 
     def test_student_view(self):
         """
-        Tests the function that passes in all the information in the context that will be used in templates/textannotation.html
+        Tests the function that passes in all the information in the context
+        that will be used in templates/textannotation.html
         """
         context = self.mod.student_view({}).content
-        for key in ['display_name', 'tag', 'source', 'instructions_html', 'content_html', 'annotation_storage', 'token', 'diacritic_marks', 'default_tab', 'annotation_mode', 'is_course_staff']:
+        for key in ['display_name',
+                    'tag',
+                    'source',
+                    'instructions_html',
+                    'content_html',
+                    'annotation_storage',
+                    'token',
+                    'diacritic_marks',
+                    'default_tab',
+                    'annotation_mode',
+                    'is_course_staff']:
             self.assertIn(key, context)

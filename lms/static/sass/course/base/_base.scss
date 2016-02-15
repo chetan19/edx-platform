@@ -1,17 +1,58 @@
-body {
-  min-width: 980px;
-  min-height: 100%;
-  background-image: $course-bg-image;
-  background-color: $course-bg-color;
+// lms - course - base
+// ====================
+
+// Table of Contents
+// * +Containers
+// * +Resets - Old, Body
+// * +Resets - Old, Forms
+// * +Resets - Old, Images
+// * +Resets - Old, Misc
+
+
+// +Containers
+// ====================
+
+.content-wrapper {
+  background: none;
+  border: none;
 }
 
-body, h1, h2, h3, h4, h5, h6, p, p a:link, p a:visited, a, label {
+.container {
+  padding: 0;
+
+  > div {
+    display: table;
+    table-layout: fixed;
+    width: 100%;
+    border: 1px solid $border-color-2;
+    background: $container-bg;
+    box-shadow: 0 1px 2px $shadow-l2;
+  }
+}
+
+
+// +Resets - Old, Body
+// ====================
+
+body {
+  min-height: 100%;
+  background-color: $course-bg-color;
+
+  //for background texture:
+  //background-image: $course-bg-image;
+}
+
+body, h1, h2, h3, h4, h5, h6, p, label {
   @include text-align(left);
   font-family: $sans-serif;
 }
 
 table {
   table-layout: fixed;
+}
+
+.xblock table {
+  table-layout: auto
 }
 
 a {
@@ -21,25 +62,8 @@ a {
   }
 }
 
-.content-wrapper {
-  background: none;
-  border: none;
-}
-
-.container {
-  padding: 20px 0 0 0;
-
-  > div {
-    display: table;
-    table-layout: fixed;
-    width: 100%;
-    border-radius: 3px;
-    border: 1px solid $outer-border-color;
-    background: $container-bg;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  }
-}
-
+// +Resets - Old, Forms
+// ====================
 form {
   label {
     display: block;
@@ -53,6 +77,7 @@ form.choicegroup {
   }
 }
 
+
 textarea,
 input[type="text"],
 input[type="email"],
@@ -60,16 +85,16 @@ input[type="password"] {
   background: $white;
   border: 1px solid $border-color-2;
   border-radius: 0;
-  box-shadow: 0 1px 0 0 rgba(255,255,255, 0.6), inset 0 0 3px 0 rgba(0,0,0, 0.1);
+  box-shadow: 0 1px 0 0 rgba(255,255,255, 0.6), inset 0 0 3px 0 $shadow-l1;
   @include box-sizing(border-box);
   font: normal 1em $sans-serif;
   height: 35px;
-  padding: 5px 12px;
+  padding: ($baseline/4) 12px;
   vertical-align: top;
   -webkit-font-smoothing: antialiased;
 
   &:last-child {
-    margin-right: 0px;
+    margin-right: 0;
   }
 
   &:focus {
@@ -96,6 +121,8 @@ button,
 }
 
 
+// +Resets - Old, Images
+// ====================
 img {
   max-width: 100%;
 }
@@ -111,7 +138,7 @@ img {
   font-size: 11px;
   font-weight: 400;
   line-height: 26px;
-  color: #fff;
+  color: $white;
   pointer-events: none;
   opacity: 0;
   @include transition(opacity .1s linear 0s);
@@ -128,6 +155,9 @@ img {
   }
 }
 
+
+// +Resets - Old, Misc
+// ====================
 .test-class {
   border: 1px solid #f00;
 }
@@ -148,17 +178,17 @@ img {
   background: -webkit-linear-gradient(top, rgba(255, 255, 255, .1), rgba(255, 255, 255, 0)) rgba(30, 30, 30, .92);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .3), 0 1px 0 rgba(255, 255, 255, .1) inset;
   font-size: 13px;
-  color: #fff;
+  color: $white;
   opacity: 0;
   -webkit-transition: all .2s;
 
   p, span {
-    color: #fff;
+    color: $white;
   }
 
   strong {
     display: block;
-    margin-bottom: 10px;
+    margin-bottom: ($baseline/2);
     font-size: 16px;
     font-weight: 700;
     text-align: center;
@@ -184,7 +214,7 @@ img {
 
   .action-btn {
     @include dark-grey-button;
-    margin-top: 10px;
+    margin-top: ($baseline/2);
     text-align: center;
   }
 }

@@ -1,4 +1,4 @@
-define(["js/views/baseview", "underscore", "jquery", "gettext", "js/views/feedback_notification", "js/views/feedback_alert", "js/views/baseview", "jquery.smoothScroll"],
+define(["js/views/baseview", "underscore", "jquery", "gettext", "common/js/components/views/feedback_notification", "common/js/components/views/feedback_alert", "js/views/baseview", "jquery.smoothScroll"],
     function(BaseView, _, $, gettext, NotificationView, AlertView) {
 
 var ValidatingView = BaseView.extend({
@@ -60,7 +60,12 @@ var ValidatingView = BaseView.extend({
         // Set model field and return the new value.
         this.clearValidationErrors();
         var field = this.selectorToField[event.currentTarget.id];
-        var newVal = $(event.currentTarget).val();
+        var newVal = ''
+        if(event.currentTarget.type == 'checkbox'){
+            newVal = $(event.currentTarget).is(":checked").toString();
+        }else{
+            newVal = $(event.currentTarget).val();
+        }
         this.model.set(field, newVal);
         this.model.isValid();
         return newVal;
@@ -152,6 +157,7 @@ var ValidatingView = BaseView.extend({
             {
                 success: function() {
                     self.showSavedBar();
+                    self.render();
                 },
                 silent: true
             }

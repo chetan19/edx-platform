@@ -9,12 +9,12 @@ if Backbone?
         (event) -> DiscussionUtil.activateOnSpace(event, @toggleNewPost)
       "click .discussion-paginator a": "navigateToPage"
 
-    paginationTemplate: -> DiscussionUtil.getTemplate("_pagination")
     page_re: /\?discussion_page=(\d+)/
-    initialize: ->
+    initialize: (options) ->
       @toggleDiscussionBtn = @$(".discussion-show")
       # Set the page if it was set in the URL. This is used to allow deep linking to pages
       match = @page_re.exec(window.location.href)
+      @context = options.context or "course"  # allowed values are "course" or "standalone"
       if match
         @page = parseInt(match[1])
       else
@@ -29,7 +29,7 @@ if Backbone?
       if @showed
         @newPostForm.slideDown(300)
       else
-        @newPostForm.show()
+        @newPostForm.show().focus()
       @toggleDiscussionBtn.addClass('shown')
       @toggleDiscussionBtn.find('.button-text').html(gettext("Hide Discussion"))
       @$("section.discussion").slideDown()
@@ -91,18 +91,22 @@ if Backbone?
       @discussion = new Discussion()
       @discussion.reset(response.discussion_data, {silent: false})
 
-      $discussion = $(Mustache.render $("script#_inline_discussion").html(), {'threads':response.discussion_data, 'discussionId': discussionId})
+      $discussion = _.template($("#inline-discussion-template").html())(
+        'threads': response.discussion_data,
+        'discussionId': discussionId
+      )
       if @$('section.discussion').length
         @$('section.discussion').replaceWith($discussion)
       else
         @$el.append($discussion)
 
-      @newPostForm = $('.new-post-article')
+      @newPostForm = this.$el.find('.new-post-article')
       @threadviews = @discussion.map (thread) =>
         view = new DiscussionThreadView(
           el: @$("article#thread_#{thread.id}"),
           model: thread,
           mode: "inline",
+          context: @context,
           course_settings: @course_settings,
           topicId: discussionId
         )
@@ -116,7 +120,8 @@ if Backbone?
         el: @newPostForm,
         collection: @discussion,
         course_settings: @course_settings,
-        topicId: discussionId
+        topicId: discussionId,
+        is_commentable_cohorted: response.is_commentable_cohorted
       )
       @newPostView.render()
       @listenTo( @newPostView, 'newPost:cancel', @hideNewPost )
@@ -127,7 +132,7 @@ if Backbone?
       @renderPagination(response.num_pages)
 
       if @isWaitingOnNewPost
-        @newPostForm.show()
+        @newPostForm.show().focus()
 
     addThread: (thread, collection, options) =>
       # TODO: When doing pagination, this will need to repaginate. Perhaps just reload page 1?
@@ -138,6 +143,7 @@ if Backbone?
         el: article,
         model: thread,
         mode: "inline",
+        context: @context,
         course_settings: @course_settings,
         topicId: @$el.data("discussion-id")
       )
@@ -148,8 +154,8 @@ if Backbone?
       pageUrl = (number) ->
         "?discussion_page=#{number}"
       params = DiscussionUtil.getPaginationParams(@page, numPages, pageUrl)
-      thing = Mustache.render @paginationTemplate(), params
-      @$('section.pagination').html(thing)
+      pagination = _.template($("#pagination-template").html())(params)
+      @$('section.discussion-pagination').html(pagination)
 
     navigateToPage: (event) =>
       event.preventDefault()

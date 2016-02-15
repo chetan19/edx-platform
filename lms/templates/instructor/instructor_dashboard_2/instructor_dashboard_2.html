@@ -1,8 +1,10 @@
-<%! from django.utils.translation import ugettext as _ %>
-<%! from django.core.urlresolvers import reverse %>
-
 <%inherit file="/main.html" />
 <%namespace name='static' file='/static_content.html'/>
+<%!
+from django.utils.translation import ugettext as _
+from django.core.urlresolvers import reverse
+%>
+<%block name="bodyclass">view-in-course view-instructordash</%block>
 
 ## ----- Tips on adding something to the new instructor dashboard -----
 ## 1. add your input element, e.g. in instructor_dashboard2/data_download.html
@@ -32,7 +34,8 @@
         window.Range.prototype = { };
     }
   </script>
-  <script type="text/javascript" src="${static.url('js/vendor/backbone-min.js')}"></script>
+  <script type="text/javascript" src="${static.url('js/instructor_dashboard/proctoring.js')}"></script>
+  <script type="text/javascript" src="${static.url('js/vendor/date.js')}"></script>
   <script type="text/javascript" src="${static.url('js/vendor/mustache.js')}"></script>
   <script type="text/javascript" src="${static.url('js/vendor/flot/jquery.flot.js')}"></script>
   <script type="text/javascript" src="${static.url('js/vendor/flot/jquery.flot.axislabels.js')}"></script>
@@ -48,6 +51,8 @@
   <script type="text/javascript" src="${static.url('js/vendor/tinymce/js/tinymce/tinymce.full.min.js')}"></script>
   <script type="text/javascript" src="${static.url('js/vendor/tinymce/js/tinymce/jquery.tinymce.min.js')}"></script>
   <script type="text/javascript" src="${static.url('js/vendor/jQuery-File-Upload/js/jquery.fileupload.js')}"></script>
+  <script type="text/javascript" src="${static.url('js/vendor/jquery.qubit.js')}"></script>
+
   <%static:js group='module-descriptor-js'/>
   <%static:js group='instructor_dash'/>
   <%static:js group='application'/>
@@ -56,15 +61,12 @@
   <script type="text/javascript" src="${static.url('js/models/notification.js')}"></script>
   <script type="text/javascript" src="${static.url('js/views/notification.js')}"></script>
   <script type="text/javascript" src="${static.url('js/views/file_uploader.js')}"></script>
-  <script type="text/javascript" src="${static.url('js/models/cohort.js')}"></script>
-  <script type="text/javascript" src="${static.url('js/collections/cohort.js')}"></script>
-  <script type="text/javascript" src="${static.url('js/views/cohort_editor.js')}"></script>
-  <script type="text/javascript" src="${static.url('js/views/cohorts.js')}"></script>
+  <script type="text/javascript" src="${static.url('js/utils/animation.js')}"></script>
 </%block>
 
 ## Include Underscore templates
 <%block name="header_extras">
-% for template_name in ["cohorts", "cohort-editor", "cohort-selector", "add-cohort-form", "notification"]:
+% for template_name in ["cohorts", "enrollment-code-lookup-links", "cohort-editor", "cohort-group-header", "cohort-selector", "cohort-form", "notification", "cohort-state", "cohort-discussions-inline", "cohort-discussions-course-wide", "cohort-discussions-category", "cohort-discussions-subcategory", "certificate-white-list", "certificate-white-list-editor", "certificate-bulk-white-list", "certificate-invalidation"]:
 <script type="text/template" id="${template_name}-tpl">
   <%static:include path="instructor/instructor_dashboard_2/${template_name}.underscore" />
 </script>
@@ -88,9 +90,6 @@
       <div class="wrap-instructor-info studio-view">
         %if studio_url:
         <a class="instructor-info-action" href="${studio_url}">${_("View Course in Studio")}</a>
-        %endif
-        %if settings.FEATURES.get('ENABLE_INSTRUCTOR_LEGACY_DASHBOARD'):
-        <a class="instructor-info-action" href="${ old_dashboard_url }"> ${_("Revert to Legacy Dashboard")} </a>
         %endif
       </div>
 
@@ -124,3 +123,4 @@
     </section>
   </div>
 </section>
+

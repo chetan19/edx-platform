@@ -1,14 +1,16 @@
-define([
-    'jquery',
-    'underscore',
-    'js/common_helpers/template_helpers',
-    'js/common_helpers/ajax_helpers',
-    'js/student_account/models/PasswordResetModel',
-    'js/student_account/views/PasswordResetView',
-], function($, _, TemplateHelpers, AjaxHelpers, PasswordResetModel, PasswordResetView) {
-        describe('edx.student.account.PasswordResetView', function() {
-            'use strict';
+;(function (define) {
+    'use strict';
+    define([
+            'jquery',
+            'underscore',
+            'common/js/spec_helpers/template_helpers',
+            'common/js/spec_helpers/ajax_helpers',
+            'js/student_account/models/PasswordResetModel',
+            'js/student_account/views/PasswordResetView'
+        ],
+        function($, _, TemplateHelpers, AjaxHelpers, PasswordResetModel, PasswordResetView) {
 
+        describe('edx.student.account.PasswordResetView', function() {
             var model = null,
                 view = null,
                 requests = null,
@@ -46,11 +48,11 @@ define([
             };
 
             var submitEmail = function(validationSuccess) {
-                // Simulate manual entry of an email address
-                $('#password-reset-email').val(EMAIL);
-
                 // Create a fake click event
                 var clickEvent = $.Event('click');
+
+                // Simulate manual entry of an email address
+                $('#password-reset-email').val(EMAIL);
 
                 // If validationSuccess isn't passed, we avoid
                 // spying on `view.validate` twice
@@ -67,7 +69,7 @@ define([
             };
 
             beforeEach(function() {
-                setFixtures('<div id="password-reset-wrapper"></div>');
+                setFixtures('<div id="password-reset-form" class="form-wrapper hidden"></div>');
                 TemplateHelpers.installTemplate('templates/student_account/password_reset');
                 TemplateHelpers.installTemplate('templates/student_account/form_field');
             });
@@ -90,6 +92,12 @@ define([
 
                 // Verify that the success message is visible
                 expect($('.js-reset-success')).not.toHaveClass('hidden');
+
+                // Verify that login form has loaded
+                expect($('#login-form')).not.toHaveClass('hidden');
+
+                // Verify that password reset view has been removed
+                expect($( view.el ).html().length).toEqual(0);
             });
 
             it('validates the email field', function() {
@@ -135,5 +143,5 @@ define([
                 expect(view.$errors).toHaveClass('hidden');
             });
         });
-    }
-);
+    });
+}).call(this, define || RequireJS.define);

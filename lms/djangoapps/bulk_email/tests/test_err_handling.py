@@ -4,19 +4,18 @@ Unit tests for handling email sending errors
 """
 from itertools import cycle
 
-from celery.states import SUCCESS, RETRY
-from django.test.utils import override_settings
+from celery.states import SUCCESS, RETRY  # pylint: disable=no-name-in-module, import-error
 from django.conf import settings
 from django.core.management import call_command
 from django.core.urlresolvers import reverse
 from django.db import DatabaseError
 import json
-from mock import patch
+from mock import patch, Mock
+from nose.plugins.attrib import attr
 from smtplib import SMTPDataError, SMTPServerDisconnected, SMTPConnectError
 
 from bulk_email.models import CourseEmail, SEND_TO_ALL
 from bulk_email.tasks import perform_delegate_email_batches, send_course_email
-from xmodule.modulestore.tests.django_utils import TEST_DATA_MOCK_MODULESTORE
 from instructor_task.models import InstructorTask
 from instructor_task.subtasks import (
     initialize_subtask_info,
@@ -37,7 +36,8 @@ class EmailTestException(Exception):
     pass
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
+@attr('shard_1')
+@patch('bulk_email.models.html_to_text', Mock(return_value='Mocking CourseEmail.text_message', autospec=True))
 @patch.dict(settings.FEATURES, {'ENABLE_INSTRUCTOR_EMAIL': True, 'REQUIRE_COURSE_EMAIL_AUTH': False})
 class TestEmailErrors(ModuleStoreTestCase):
     """
@@ -45,6 +45,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     """
 
     def setUp(self):
+        super(TestEmailErrors, self).setUp()
         course_title = u"ẗëṡẗ title ｲ乇丂ｲ ﾶ乇丂丂ﾑg乇 ｷo尺 ﾑﾚﾚ тэѕт мэѕѕаБэ"
         self.course = CourseFactory.create(display_name=course_title)
         self.instructor = AdminFactory.create()
@@ -58,9 +59,6 @@ class TestEmailErrors(ModuleStoreTestCase):
             'course_id': self.course.id.to_deprecated_string(),
             'success': True,
         }
-
-    def tearDown(self):
-        patch.stopall()
 
     @patch('bulk_email.tasks.get_connection', autospec=True)
     @patch('bulk_email.tasks.send_course_email.retry')
@@ -170,7 +168,7 @@ class TestEmailErrors(ModuleStoreTestCase):
         entry = InstructorTask.create(course_id, "task_type", "task_key", "task_input", self.instructor)
         task_input = {"email_id": -1}
         with self.assertRaises(CourseEmail.DoesNotExist):
-            perform_delegate_email_batches(entry.id, course_id, task_input, "action_name")  # pylint: disable=no-member
+            perform_delegate_email_batches(entry.id, course_id, task_input, "action_name")
         ((log_str, __, email_id), __) = mock_log.warning.call_args
         self.assertTrue(mock_log.warning.called)
         self.assertIn('Failed to get CourseEmail with id', log_str)
@@ -185,10 +183,10 @@ class TestEmailErrors(ModuleStoreTestCase):
         email = CourseEmail(course_id=course_id)
         email.save()
         entry = InstructorTask.create(course_id, "task_type", "task_key", "task_input", self.instructor)
-        task_input = {"email_id": email.id}  # pylint: disable=no-member
+        task_input = {"email_id": email.id}
         # (?i) is a regex for ignore case
         with self.assertRaisesRegexp(ValueError, r"(?i)course not found"):
-            perform_delegate_email_batches(entry.id, course_id, task_input, "action_name")  # pylint: disable=no-member
+            perform_delegate_email_batches(entry.id, course_id, task_input, "action_name")
 
     def test_nonexistent_to_option(self):
         """
@@ -197,9 +195,9 @@ class TestEmailErrors(ModuleStoreTestCase):
         email = CourseEmail(course_id=self.course.id, to_option="IDONTEXIST")
         email.save()
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        task_input = {"email_id": email.id}  # pylint: disable=no-member
+        task_input = {"email_id": email.id}
         with self.assertRaisesRegexp(Exception, 'Unexpected bulk email TO_OPTION found: IDONTEXIST'):
-            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")  # pylint: disable=no-member
+            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")
 
     def test_wrong_course_id_in_task(self):
         """
@@ -208,9 +206,9 @@ class TestEmailErrors(ModuleStoreTestCase):
         email = CourseEmail(course_id=self.course.id, to_option=SEND_TO_ALL)
         email.save()
         entry = InstructorTask.create("bogus/task/id", "task_type", "task_key", "task_input", self.instructor)
-        task_input = {"email_id": email.id}  # pylint: disable=no-member
+        task_input = {"email_id": email.id}
         with self.assertRaisesRegexp(ValueError, 'does not match task value'):
-            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")  # pylint: disable=no-member
+            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")
 
     def test_wrong_course_id_in_email(self):
         """
@@ -219,14 +217,14 @@ class TestEmailErrors(ModuleStoreTestCase):
         email = CourseEmail(course_id=SlashSeparatedCourseKey("bogus", "course", "id"), to_option=SEND_TO_ALL)
         email.save()
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        task_input = {"email_id": email.id}  # pylint: disable=no-member
+        task_input = {"email_id": email.id}
         with self.assertRaisesRegexp(ValueError, 'does not match email value'):
-            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")  # pylint: disable=no-member
+            perform_delegate_email_batches(entry.id, self.course.id, task_input, "action_name")
 
     def test_send_email_undefined_subtask(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         to_list = ['test@test.com']
         global_email_context = {'course_title': 'dummy course'}
         subtask_id = "subtask-id-value"
@@ -238,7 +236,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_missing_subtask(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         to_list = ['test@test.com']
         global_email_context = {'course_title': 'dummy course'}
         subtask_id = "subtask-id-value"
@@ -252,7 +250,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_completed_subtask(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         subtask_id = "subtask-id-value"
         initialize_subtask_info(entry, "emailed", 100, [subtask_id])
         subtask_status = SubtaskStatus.create(subtask_id, state=SUCCESS)
@@ -267,7 +265,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_running_subtask(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         subtask_id = "subtask-id-value"
         initialize_subtask_info(entry, "emailed", 100, [subtask_id])
         subtask_status = SubtaskStatus.create(subtask_id)
@@ -282,7 +280,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_retried_subtask(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         subtask_id = "subtask-id-value"
         initialize_subtask_info(entry, "emailed", 100, [subtask_id])
         subtask_status = SubtaskStatus.create(subtask_id, state=RETRY, retried_nomax=2)
@@ -302,7 +300,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_with_locked_instructor_task(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         subtask_id = "subtask-id-locked-model"
         initialize_subtask_info(entry, "emailed", 100, [subtask_id])
         subtask_status = SubtaskStatus.create(subtask_id)
@@ -318,7 +316,7 @@ class TestEmailErrors(ModuleStoreTestCase):
     def test_send_email_undefined_email(self):
         # test at a lower level, to ensure that the course gets checked down below too.
         entry = InstructorTask.create(self.course.id, "task_type", "task_key", "task_input", self.instructor)
-        entry_id = entry.id  # pylint: disable=no-member
+        entry_id = entry.id
         to_list = ['test@test.com']
         global_email_context = {'course_title': 'dummy course'}
         subtask_id = "subtask-id-undefined-email"

@@ -1,4 +1,4 @@
-define(["jquery", "underscore", "js/views/xblock", "js/utils/module", "gettext", "js/views/feedback_notification",
+define(["jquery", "underscore", "js/views/xblock", "js/utils/module", "gettext", "common/js/components/views/feedback_notification",
     "jquery.ui"], // The container view uses sortable, which is provided by jquery.ui.
     function ($, _, XBlockView, ModuleUtils, gettext, NotificationView) {
         var studioXBlockWrapperClass = '.studio-xblock-wrapper';
@@ -8,6 +8,8 @@ define(["jquery", "underscore", "js/views/xblock", "js/utils/module", "gettext",
             // the page was generated). Use that request token to filter out user-defined HTML in any
             // child xblocks within the page.
             requestToken: "",
+
+            new_child_view: 'reorderable_container_child_preview',
 
             xblockReady: function () {
                 XBlockView.prototype.xblockReady.call(this);
@@ -37,7 +39,7 @@ define(["jquery", "underscore", "js/views/xblock", "js/utils/module", "gettext",
                         }
 
                         saving = new NotificationView.Mini({
-                            title: gettext('Saving&hellip;')
+                            title: gettext('Saving')
                         });
                         saving.show();
 
@@ -121,6 +123,10 @@ define(["jquery", "underscore", "js/views/xblock", "js/utils/module", "gettext",
                         xblockInfo.fetch();
                     }
                 });
+            },
+
+            acknowledgeXBlockDeletion: function(locator){
+                this.notifyRuntime('deleted-child', locator);
             },
 
             refresh: function() {

@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+"""Tests for Event tracker backend."""
 from __future__ import absolute_import
 
 import json
@@ -11,7 +13,7 @@ from track.backends.logger import LoggerBackend
 
 class TestLoggerBackend(TestCase):
     def setUp(self):
-
+        super(TestLoggerBackend, self).setUp()
         self.handler = MockLoggingHandler()
         self.handler.setLevel(logging.INFO)
 

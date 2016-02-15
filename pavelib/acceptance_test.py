@@ -8,7 +8,7 @@ from optparse import make_option
 try:
     from pygments.console import colorize
 except ImportError:
-    colorize = lambda color, text: text  # pylint: disable-msg=invalid-name
+    colorize = lambda color, text: text
 
 __test__ = False  # do not collect
 
@@ -26,10 +26,11 @@ __test__ = False  # do not collect
     make_option("--verbose", action="store_const", const=2, dest="verbosity"),
     make_option("-q", "--quiet", action="store_const", const=0, dest="verbosity"),
     make_option("-v", "--verbosity", action="count", dest="verbosity"),
+    make_option("--pdb", action="store_true", help="Launches an interactive debugger upon error"),
 ])
 def test_acceptance(options):
     """
-    Run the acceptance tests for the either lms or cms
+    Run the acceptance tests for either lms or cms
     """
     opts = {
         'fasttest': getattr(options, 'fasttest', False),
@@ -37,6 +38,7 @@ def test_acceptance(options):
         'default_store': getattr(options, 'default_store', None),
         'verbosity': getattr(options, 'verbosity', 3),
         'extra_args': getattr(options, 'extra_args', ''),
+        'pdb': getattr(options, 'pdb', False),
     }
 
     if opts['system'] not in ['cms', 'lms']:
@@ -44,13 +46,13 @@ def test_acceptance(options):
             'red',
             'No system specified, running tests for both cms and lms.'
         )
-        print(msg)
+        print msg
     if opts['default_store'] not in ['draft', 'split']:
         msg = colorize(
             'red',
             'No modulestore specified, running tests for both draft and split.'
         )
-        print(msg)
+        print msg
 
     suite = AcceptanceTestSuite('{} acceptance'.format(opts['system']), **opts)
     suite.run()

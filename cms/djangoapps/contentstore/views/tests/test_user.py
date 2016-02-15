@@ -70,14 +70,14 @@ class UsersTestCase(CourseTestCase):
     def test_detail_post(self):
         resp = self.client.post(
             self.detail_url,
-            data={"role": None},
+            data={"role": ""},
         )
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
         # no content: should not be in any roles
-        self.assertFalse(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
-        self.assertFalse(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
         self.assert_not_enrolled()
 
     def test_detail_post_staff(self):
@@ -90,8 +90,8 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
-        self.assertFalse(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
         self.assert_enrolled()
 
     def test_detail_post_staff_other_inst(self):
@@ -106,12 +106,12 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
-        self.assertFalse(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
         self.assert_enrolled()
         # check that other user is unchanged
         user = User.objects.get(email=self.user.email)
-        self.assertTrue(auth.has_access(user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(user, CourseInstructorRole(self.course.id)))
         self.assertFalse(CourseStaffRole(self.course.id).has_user(user))
 
     def test_detail_post_instructor(self):
@@ -124,7 +124,7 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
         self.assertFalse(CourseStaffRole(self.course.id).has_user(ext_user))
         self.assert_enrolled()
 
@@ -149,8 +149,8 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
-        self.assertFalse(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
         self.assert_enrolled()
 
     def test_detail_delete_staff(self):
@@ -163,7 +163,7 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertFalse(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
 
     def test_detail_delete_instructor(self):
         auth.add_users(self.user, CourseInstructorRole(self.course.id), self.ext_user, self.user)
@@ -175,7 +175,7 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertFalse(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
 
     def test_delete_last_instructor(self):
         auth.add_users(self.user, CourseInstructorRole(self.course.id), self.ext_user)
@@ -189,7 +189,7 @@ class UsersTestCase(CourseTestCase):
         self.assertIn("error", result)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
 
     def test_post_last_instructor(self):
         auth.add_users(self.user, CourseInstructorRole(self.course.id), self.ext_user)
@@ -204,7 +204,7 @@ class UsersTestCase(CourseTestCase):
         self.assertIn("error", result)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseInstructorRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseInstructorRole(self.course.id)))
 
     def test_permission_denied_self(self):
         auth.add_users(self.user, CourseStaffRole(self.course.id), self.user)
@@ -218,7 +218,7 @@ class UsersTestCase(CourseTestCase):
             data={"role": "instructor"},
             HTTP_ACCEPT="application/json",
         )
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 403)
         result = json.loads(resp.content)
         self.assertIn("error", result)
 
@@ -232,7 +232,7 @@ class UsersTestCase(CourseTestCase):
             data={"role": "instructor"},
             HTTP_ACCEPT="application/json",
         )
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 403)
         result = json.loads(resp.content)
         self.assertIn("error", result)
 
@@ -247,7 +247,7 @@ class UsersTestCase(CourseTestCase):
         self.assertEqual(resp.status_code, 204)
         # reload user from DB
         user = User.objects.get(email=self.user.email)
-        self.assertFalse(auth.has_access(user, CourseStaffRole(self.course.id)))
+        self.assertFalse(auth.user_has_role(user, CourseStaffRole(self.course.id)))
 
     def test_staff_cannot_delete_other(self):
         auth.add_users(self.user, CourseStaffRole(self.course.id), self.user, self.ext_user)
@@ -255,12 +255,12 @@ class UsersTestCase(CourseTestCase):
         self.user.save()
 
         resp = self.client.delete(self.detail_url)
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 403)
         result = json.loads(resp.content)
         self.assertIn("error", result)
         # reload user from DB
         ext_user = User.objects.get(email=self.ext_user.email)
-        self.assertTrue(auth.has_access(ext_user, CourseStaffRole(self.course.id)))
+        self.assertTrue(auth.user_has_role(ext_user, CourseStaffRole(self.course.id)))
 
     def test_user_not_initially_enrolled(self):
         # Verify that ext_user is not enrolled in the new course before being added as a staff member.

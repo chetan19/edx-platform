@@ -52,6 +52,11 @@ class StubCommentsServiceHandler(StubHttpRequestHandler):
         self.send_json_response({'username': self.post_dict.get("username"), 'external_id': self.post_dict.get("external_id")})
 
     def do_DELETE(self):
+        pattern_handlers = {
+            "/api/v1/comments/(?P<comment_id>\\w+)$": self.do_delete_comment
+        }
+        if self.match_pattern(pattern_handlers):
+            return
         self.send_json_response({})
 
     def do_user(self, user_id):
@@ -100,13 +105,22 @@ class StubCommentsServiceHandler(StubHttpRequestHandler):
             self.send_response(404, content="404 Not Found")
 
     def do_threads(self):
-        self.send_json_response({"collection": [], "page": 1, "num_pages": 1})
+        threads = self.server.config.get('threads', {})
+        threads_data = [val for key, val in threads.items()]
+        self.send_json_response({"collection": threads_data, "page": 1, "num_pages": 1})
 
     def do_search_threads(self):
         self.send_json_response(self.server.config.get('search_result', {}))
 
     def do_comment(self, comment_id):
         # django_comment_client calls GET comment before doing a DELETE, so that's what this is here to support.
+        if comment_id in self.server.config.get('comments', {}):
+            comment = self.server.config['comments'][comment_id]
+            self.send_json_response(comment)
+
+    def do_delete_comment(self, comment_id):
+        """Handle comment deletion. Returns a JSON representation of the
+        deleted comment."""
         if comment_id in self.server.config.get('comments', {}):
             comment = self.server.config['comments'][comment_id]
             self.send_json_response(comment)

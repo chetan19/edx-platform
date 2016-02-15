@@ -22,7 +22,7 @@ from nose.plugins.attrib import attr
 from .test_studio_video_module import CMSVideoBaseTest
 
 
-@attr('shard_2')
+@attr('shard_6')
 class VideoTranscriptTest(CMSVideoBaseTest):
     """
     CMS Video Transcript Test Class
@@ -31,7 +31,7 @@ class VideoTranscriptTest(CMSVideoBaseTest):
     def setUp(self):
         super(VideoTranscriptTest, self).setUp()
 
-    def _create_video_component(self, subtitles=False, subtitle_id='OEoXaMPEzfM'):
+    def _create_video_component(self, subtitles=False, subtitle_id='3_yD_cEKoCk'):
         """
         Create a video component and navigate to unit page
 

@@ -10,39 +10,49 @@ var edx = edx || {};
 
     edx.verify_student.ReviewPhotosStepView = edx.verify_student.StepView.extend({
 
-        postRender: function() {
-            var model = this.model;
+        templateName: "review_photos_step",
 
+        defaultContext: function() {
+            return {
+                platformName: '',
+                fullName: '',
+            };
+        },
+
+        postRender: function() {
             // Load the photos from the previous steps
-            $( "#face_image")[0].src = this.model.get('faceImage');
-            $( "#photo_id_image")[0].src = this.model.get('identificationImage');
+            $( '#face_image' )[0].src = this.model.get('faceImage');
+            $( '#photo_id_image' )[0].src = this.model.get('identificationImage');
 
             // Prep the name change dropdown
             $( '.expandable-area' ).slideUp();
             $( '.is-expandable' ).addClass('is-ready');
             $( '.is-expandable .title-expand' ).on( 'click', this.expandCallback );
 
-            // Disable the submit button until user confirmation
-            $( '#confirm_pics_good' ).on( 'click', this.toggleSubmitEnabled );
-
             // Go back to the first photo step if we need to retake photos
             $( '#retake_photos_button' ).on( 'click', _.bind( this.retakePhotos, this ) );
 
             // When moving to the next step, submit photos for verification
             $( '#next_step_button' ).on( 'click', _.bind( this.submitPhotos, this ) );
-        },
 
-        toggleSubmitEnabled: function() {
-            $( '#next_step_button' ).toggleClass( 'is-disabled' );
+            // Track a virtual pageview, for easy funnel reconstruction.
+            window.analytics.page( 'verification', this.templateName );
         },
 
         retakePhotos: function() {
+            // Track the user's intent to retake their photos
+            window.analytics.track( 'edx.bi.user.images.retaken', {
+                category: 'verification'
+            });
+
             this.goToStep( 'face-photo-step' );
         },
 
         submitPhotos: function() {
+            var fullName = $( '#new-name' ).val();
+
             // Disable the submit button to prevent duplicate submissions
-            $( "#next_step_button" ).addClass( "is-disabled" );
+            this.setSubmitButtonEnabled( false );
 
             // On success, move on to the next step
             this.listenToOnce( this.model, 'sync', _.bind( this.nextStep, this ) );
@@ -51,40 +61,46 @@ var edx = edx || {};
             this.listenToOnce( this.model, 'error', _.bind( this.handleSubmissionError, this ) );
 
             // Submit
-            this.model.set( 'fullName', $( '#new-name' ).val() );
+            if ( fullName ) {
+                this.model.set( 'fullName', fullName );
+            }
             this.model.save();
         },
 
         handleSubmissionError: function( xhr ) {
-            // Re-enable the submit button to allow the user to retry
-            var isConfirmChecked = $( "#confirm_pics_good" ).prop('checked');
-            $( "#next_step_button" ).toggleClass( "is-disabled", !isConfirmChecked );
+            var errorMsg = gettext( 'An error has occurred. Please try again later.' );
 
-            // Display the error
+            // Re-enable the submit button to allow the user to retry
+            this.setSubmitButtonEnabled( true );
+
             if ( xhr.status === 400 ) {
-                this.errorModel.set({
-                    errorTitle: gettext( 'Could not submit photos' ),
-                    errorMsg: xhr.responseText,
-                    shown: true
-                });
+                errorMsg = xhr.responseText;
             }
-            else {
-                this.errorModel.set({
-                    errorTitle: gettext( 'Could not submit photos' ),
-                    errorMsg: gettext( 'An unexpected error occurred.  Please try again later.' ),
-                    shown: true
-                });
-            }
+
+            this.errorModel.set({
+                errorTitle: gettext( 'Could not submit photos' ),
+                errorMsg: errorMsg,
+                shown: true
+            });
         },
 
-        expandCallback: function(event) {
+        expandCallback: function( event ) {
+            var $link = $(this),
+                $title = $link.closest('.help-tip'),
+                expanded = $title.hasClass('is-expanded');
+
             event.preventDefault();
 
-            $(this).next('.expandable-area' ).slideToggle();
+            $link.attr( 'aria-expanded', !expanded );
+            $title.toggleClass('is-expanded')
+                  .find('.expandable-area').slideToggle();
+        },
 
-            var title = $( this ).parent();
-            title.toggleClass( 'is-expanded' );
-            title.attr( 'aria-expanded', !title.attr('aria-expanded') );
+        setSubmitButtonEnabled: function( isEnabled ) {
+            $( '#next_step_button' )
+                .toggleClass( 'is-disabled', !isEnabled )
+                .prop( 'disabled', !isEnabled )
+                .attr('aria-disabled', !isEnabled);
         }
     });
 

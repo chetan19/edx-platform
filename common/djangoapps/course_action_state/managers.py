@@ -10,7 +10,7 @@ class CourseActionStateManager(models.Manager):
     An abstract Model Manager class for Course Action State models.
     This abstract class expects child classes to define the ACTION (string) field.
     """
-    class Meta:
+    class Meta(object):
         """Abstract manager class, with subclasses defining the ACTION (string) field."""
         abstract = True
 
@@ -55,7 +55,7 @@ class CourseActionUIStateManager(CourseActionStateManager):
     """
 
     # add transaction protection to revert changes by get_or_create if an exception is raised before the final save.
-    @transaction.commit_on_success
+    @transaction.atomic
     def update_state(
             self, course_key, new_state, should_display=True, message="", user=None, allow_not_found=False, **kwargs
     ):
@@ -143,7 +143,7 @@ class CourseRerunUIStateManager(CourseActionUIStateManager):
         self.update_state(
             course_key=course_key,
             new_state=self.State.FAILED,
-            message=traceback.format_exc(),
+            message=traceback.format_exc()[-self.model.MAX_MESSAGE_LENGTH:],  # truncate to fit
         )
 
 

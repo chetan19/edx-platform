@@ -64,7 +64,8 @@ Feature: LMS.LTI component
   | False              | True      |
   And I view the LTI and it is rendered in iframe
   And I see in iframe that LTI role is Instructor
-  And I switch to Student view
+  And I switch to student
+  And I view the LTI and it is rendered in iframe
   Then I see in iframe that LTI role is Student
 
   #8
@@ -127,7 +128,7 @@ Feature: LMS.LTI component
   | open_in_a_new_page | hide_launch |
   | False              | True        |
   Then in the LTI component I do not see a launch button
-  Then I see LTI component module title with text "LTI (EXTERNAL RESOURCE)"
+  Then I see LTI component module title with text "LTI (External resource)"
 
   #12
   Scenario: LTI component that set to hide_launch and not open_in_a_new_page shows no iframe
@@ -136,7 +137,7 @@ Feature: LMS.LTI component
   | open_in_a_new_page | hide_launch |
   | True               | True        |
   Then in the LTI component I do not see an provider iframe
-  Then I see LTI component module title with text "LTI (EXTERNAL RESOURCE)"
+  Then I see LTI component module title with text "LTI (External resource)"
 
   #13
   Scenario: LTI component button text is correctly displayed
@@ -162,7 +163,7 @@ Feature: LMS.LTI component
   | True                 |
   Then I view the permission alert
   Then I reject the permission alert and do not view the LTI
-  
+
   #16
   Scenario: LTI component requests permission for username and displays LTI when accepted
   Given the course has correct LTI credentials with registered Instructor
@@ -180,7 +181,7 @@ Feature: LMS.LTI component
   | True              |
   Then I view the permission alert
   Then I reject the permission alert and do not view the LTI
-  
+
   #18
   Scenario: LTI component requests permission for email and displays LTI when accepted
   Given the course has correct LTI credentials with registered Instructor
@@ -198,7 +199,7 @@ Feature: LMS.LTI component
   | True              | True                 |
   Then I view the permission alert
   Then I reject the permission alert and do not view the LTI
-  
+
   #20
   Scenario: LTI component requests permission for email and username and displays LTI when accepted
   Given the course has correct LTI credentials with registered Instructor

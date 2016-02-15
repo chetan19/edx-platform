@@ -14,7 +14,7 @@ import uuid
 
 from datetime import datetime, timedelta, tzinfo
 from fs.osfs import OSFS
-from path import path
+from path import Path as path
 from tempfile import mkdtemp
 from textwrap import dedent
 
@@ -37,7 +37,7 @@ def strip_filenames(descriptor):
     """
     Recursively strips 'filename' from all children's definitions.
     """
-    print("strip filename from {desc}".format(desc=descriptor.location.to_deprecated_string()))
+    print "strip filename from {desc}".format(desc=descriptor.location.to_deprecated_string())
     if descriptor._field_data.has(descriptor, 'filename'):
         descriptor._field_data.delete(descriptor, 'filename')
 
@@ -70,6 +70,7 @@ class RoundTripTestCase(unittest.TestCase):
     """
 
     def setUp(self):
+        super(RoundTripTestCase, self).setUp()
         self.maxDiff = None
         self.temp_dir = mkdtemp()
         self.addCleanup(shutil.rmtree, self.temp_dir)
@@ -81,7 +82,6 @@ class RoundTripTestCase(unittest.TestCase):
         "conditional_and_poll",
         "conditional",
         "self_assessment",
-        "graphic_slider_tool",
         "test_exam_registration",
         "word_cloud",
         "pure_xblock",
@@ -97,13 +97,13 @@ class RoundTripTestCase(unittest.TestCase):
         """).strip()
 
         root_dir = path(self.temp_dir)
-        print("Copying test course to temp dir {0}".format(root_dir))
+        print "Copying test course to temp dir {0}".format(root_dir)
 
         data_dir = path(DATA_DIR)
         shutil.copytree(data_dir / course_dir, root_dir / course_dir)
 
-        print("Starting import")
-        initial_import = XMLModuleStore(root_dir, course_dirs=[course_dir], xblock_mixins=(XModuleMixin,))
+        print "Starting import"
+        initial_import = XMLModuleStore(root_dir, source_dirs=[course_dir], xblock_mixins=(XModuleMixin,))
 
         courses = initial_import.get_courses()
         self.assertEquals(len(courses), 1)
@@ -111,7 +111,7 @@ class RoundTripTestCase(unittest.TestCase):
 
         # export to the same directory--that way things like the custom_tags/ folder
         # will still be there.
-        print("Starting export")
+        print "Starting export"
         file_system = OSFS(root_dir)
         initial_course.runtime.export_fs = file_system.makeopendir(course_dir)
         root = lxml.etree.Element('root')
@@ -120,14 +120,14 @@ class RoundTripTestCase(unittest.TestCase):
         with initial_course.runtime.export_fs.open('course.xml', 'w') as course_xml:
             lxml.etree.ElementTree(root).write(course_xml)
 
-        print("Starting second import")
-        second_import = XMLModuleStore(root_dir, course_dirs=[course_dir], xblock_mixins=(XModuleMixin,))
+        print "Starting second import"
+        second_import = XMLModuleStore(root_dir, source_dirs=[course_dir], xblock_mixins=(XModuleMixin,))
 
         courses2 = second_import.get_courses()
         self.assertEquals(len(courses2), 1)
         exported_course = courses2[0]
 
-        print("Checking course equality")
+        print "Checking course equality"
 
         # HACK: filenames change when changing file formats
         # during imports from old-style courses.  Ignore them.
@@ -138,13 +138,13 @@ class RoundTripTestCase(unittest.TestCase):
         self.assertEquals(initial_course.id, exported_course.id)
         course_id = initial_course.id
 
-        print("Checking key equality")
+        print "Checking key equality"
         self.assertItemsEqual(
             initial_import.modules[course_id].keys(),
             second_import.modules[course_id].keys()
         )
 
-        print("Checking module equality")
+        print "Checking module equality"
         for location in initial_import.modules[course_id].keys():
             print("Checking", location)
             self.assertTrue(blocks_are_equivalent(
@@ -158,6 +158,8 @@ class TestEdxJsonEncoder(unittest.TestCase):
     Tests for xml_exporter.EdxJSONEncoder
     """
     def setUp(self):
+        super(TestEdxJsonEncoder, self).setUp()
+
         self.encoder = EdxJSONEncoder()
 
         class OffsetTZ(tzinfo):
@@ -220,9 +222,11 @@ class ConvertExportFormat(unittest.TestCase):
     """
     def setUp(self):
         """ Common setup. """
+        super(ConvertExportFormat, self).setUp()
 
         # Directory for expanding all the test archives
         self.temp_dir = mkdtemp()
+        self.addCleanup(shutil.rmtree, self.temp_dir)
 
         # Directory where new archive will be created
         self.result_dir = path(self.temp_dir) / uuid.uuid4().hex
@@ -279,10 +283,6 @@ class ConvertExportFormat(unittest.TestCase):
         if self._no_version is None:
             self._no_version = self._expand_archive('NoVersionNumber.tar.gz')
         return self._no_version
-
-    def tearDown(self):
-        """ Common cleanup. """
-        shutil.rmtree(self.temp_dir)
 
     def _expand_archive(self, name):
         """ Expand archive into a directory and return the directory. """

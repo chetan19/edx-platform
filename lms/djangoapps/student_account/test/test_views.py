@@ -8,24 +8,25 @@ import json
 
 import mock
 import ddt
-from django.test import TestCase
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.core import mail
+from django.contrib import messages
+from django.contrib.messages.middleware import MessageMiddleware
+from django.test import TestCase
 from django.test.utils import override_settings
+from django.http import HttpRequest
 
+from course_modes.models import CourseMode
+from openedx.core.djangoapps.user_api.accounts.api import activate_account, create_account
+from openedx.core.djangoapps.user_api.accounts import EMAIL_MAX_LENGTH
+from openedx.core.djangolib.js_utils import dump_js_escaped_json
+from student.tests.factories import UserFactory
+from student_account.views import account_settings_context
+from third_party_auth.tests.testutil import simulate_running_pipeline, ThirdPartyAuthTestMixin
 from util.testing import UrlResetMixin
-from third_party_auth.tests.testutil import simulate_running_pipeline
-from openedx.core.djangoapps.user_api.api import account as account_api
-from openedx.core.djangoapps.user_api.api import profile as profile_api
-from xmodule.modulestore.tests.django_utils import (
-    ModuleStoreTestCase, mixed_store_config
-)
-from xmodule.modulestore.tests.factories import CourseFactory
-from student.tests.factories import CourseModeFactory
-
-
-MODULESTORE_CONFIG = mixed_store_config(settings.COMMON_TEST_DATA_ROOT, {}, include_xml=False)
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from openedx.core.djangoapps.theming.test_util import with_edx_domain_context
 
 
 @ddt.ddt
@@ -54,158 +55,22 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
         # Long email -- subtract the length of the @domain
         # except for one character (so we exceed the max length limit)
         u"{user}@example.com".format(
-            user=(u'e' * (account_api.EMAIL_MAX_LENGTH - 11))
+            user=(u'e' * (EMAIL_MAX_LENGTH - 11))
         )
     ]
 
     INVALID_KEY = u"123abc"
 
-    @mock.patch.dict(settings.FEATURES, {'ENABLE_NEW_DASHBOARD': True})
     def setUp(self):
         super(StudentAccountUpdateTest, self).setUp("student_account.urls")
 
         # Create/activate a new account
-        activation_key = account_api.create_account(self.USERNAME, self.OLD_PASSWORD, self.OLD_EMAIL)
-        account_api.activate_account(activation_key)
+        activation_key = create_account(self.USERNAME, self.OLD_PASSWORD, self.OLD_EMAIL)
+        activate_account(activation_key)
 
         # Login
         result = self.client.login(username=self.USERNAME, password=self.OLD_PASSWORD)
         self.assertTrue(result)
-
-    def test_index(self):
-        response = self.client.get(reverse('account_index'))
-        self.assertContains(response, "Student Account")
-
-    def test_change_email(self):
-        response = self._change_email(self.NEW_EMAIL, self.OLD_PASSWORD)
-        self.assertEquals(response.status_code, 200)
-
-        # Verify that the email associated with the account remains unchanged
-        profile_info = profile_api.profile_info(self.USERNAME)
-        self.assertEquals(profile_info['email'], self.OLD_EMAIL)
-
-        # Check that an email was sent with the activation key
-        self.assertEqual(len(mail.outbox), 1)
-        self._assert_email(
-            mail.outbox[0],
-            [self.NEW_EMAIL],
-            u"Email Change Request",
-            u"There was recently a request to change the email address"
-        )
-
-        # Retrieve the activation key from the email
-        email_body = mail.outbox[0].body
-        result = re.search('/email/confirmation/([^ \n]+)', email_body)
-        self.assertIsNot(result, None)
-        activation_key = result.group(1)
-
-        # Attempt to activate the email
-        response = self.client.get(reverse('email_change_confirm', kwargs={'key': activation_key}))
-        self.assertEqual(response.status_code, 200)
-
-        # Verify that the email was changed
-        profile_info = profile_api.profile_info(self.USERNAME)
-        self.assertEquals(profile_info['email'], self.NEW_EMAIL)
-
-        # Verify that notification emails were sent
-        self.assertEqual(len(mail.outbox), 2)
-        self._assert_email(
-            mail.outbox[1],
-            [self.OLD_EMAIL, self.NEW_EMAIL],
-            u"Email Change Successful",
-            u"You successfully changed the email address"
-        )
-
-    def test_email_change_wrong_password(self):
-        response = self._change_email(self.NEW_EMAIL, "wrong password")
-        self.assertEqual(response.status_code, 401)
-
-    def test_email_change_request_no_user(self):
-        # Patch account API to raise an internal error when an email change is requested
-        with mock.patch('student_account.views.account_api.request_email_change') as mock_call:
-            mock_call.side_effect = account_api.AccountUserNotFound
-            response = self._change_email(self.NEW_EMAIL, self.OLD_PASSWORD)
-
-        self.assertEquals(response.status_code, 400)
-
-    def test_email_change_request_email_taken_by_active_account(self):
-        # Create/activate a second user with the new email
-        activation_key = account_api.create_account(self.ALTERNATE_USERNAME, self.OLD_PASSWORD, self.NEW_EMAIL)
-        account_api.activate_account(activation_key)
-
-        # Request to change the original user's email to the email now used by the second user
-        response = self._change_email(self.NEW_EMAIL, self.OLD_PASSWORD)
-        self.assertEquals(response.status_code, 409)
-
-    def test_email_change_request_email_taken_by_inactive_account(self):
-        # Create a second user with the new email, but don't active them
-        account_api.create_account(self.ALTERNATE_USERNAME, self.OLD_PASSWORD, self.NEW_EMAIL)
-
-        # Request to change the original user's email to the email used by the inactive user
-        response = self._change_email(self.NEW_EMAIL, self.OLD_PASSWORD)
-        self.assertEquals(response.status_code, 200)
-
-    @ddt.data(*INVALID_EMAILS)
-    def test_email_change_request_email_invalid(self, invalid_email):
-        # Request to change the user's email to an invalid address
-        response = self._change_email(invalid_email, self.OLD_PASSWORD)
-        self.assertEquals(response.status_code, 400)
-
-    def test_email_change_confirmation(self):
-        # Get an email change activation key
-        activation_key = account_api.request_email_change(self.USERNAME, self.NEW_EMAIL, self.OLD_PASSWORD)
-
-        # Follow the link sent in the confirmation email
-        response = self.client.get(reverse('email_change_confirm', kwargs={'key': activation_key}))
-        self.assertContains(response, "Email change successful")
-
-        # Verify that the email associated with the account has changed
-        profile_info = profile_api.profile_info(self.USERNAME)
-        self.assertEquals(profile_info['email'], self.NEW_EMAIL)
-
-    def test_email_change_confirmation_invalid_key(self):
-        # Visit the confirmation page with an invalid key
-        response = self.client.get(reverse('email_change_confirm', kwargs={'key': self.INVALID_KEY}))
-        self.assertContains(response, "Something went wrong")
-
-        # Verify that the email associated with the account has not changed
-        profile_info = profile_api.profile_info(self.USERNAME)
-        self.assertEquals(profile_info['email'], self.OLD_EMAIL)
-
-    def test_email_change_confirmation_email_already_exists(self):
-        # Get an email change activation key
-        email_activation_key = account_api.request_email_change(self.USERNAME, self.NEW_EMAIL, self.OLD_PASSWORD)
-
-        # Create/activate a second user with the new email
-        account_activation_key = account_api.create_account(self.ALTERNATE_USERNAME, self.OLD_PASSWORD, self.NEW_EMAIL)
-        account_api.activate_account(account_activation_key)
-
-        # Follow the link sent to the original user
-        response = self.client.get(reverse('email_change_confirm', kwargs={'key': email_activation_key}))
-        self.assertContains(response, "address you wanted to use is already used")
-
-        # Verify that the email associated with the original account has not changed
-        profile_info = profile_api.profile_info(self.USERNAME)
-        self.assertEquals(profile_info['email'], self.OLD_EMAIL)
-
-    def test_email_change_confirmation_internal_error(self):
-        # Get an email change activation key
-        activation_key = account_api.request_email_change(self.USERNAME, self.NEW_EMAIL, self.OLD_PASSWORD)
-
-        # Patch account API to return an internal error
-        with mock.patch('student_account.views.account_api.confirm_email_change') as mock_call:
-            mock_call.side_effect = account_api.AccountInternalError
-            response = self.client.get(reverse('email_change_confirm', kwargs={'key': activation_key}))
-
-        self.assertContains(response, "Something went wrong")
-
-    def test_email_change_request_missing_email_param(self):
-        response = self._change_email(None, self.OLD_PASSWORD)
-        self.assertEqual(response.status_code, 400)
-
-    def test_email_change_request_missing_password_param(self):
-        response = self._change_email(self.OLD_EMAIL, None)
-        self.assertEqual(response.status_code, 400)
 
     @skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in LMS')
     def test_password_change(self):
@@ -285,11 +150,15 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
         self.client.logout()
 
         # Create a second user, but do not activate it
-        account_api.create_account(self.ALTERNATE_USERNAME, self.OLD_PASSWORD, self.NEW_EMAIL)
+        create_account(self.ALTERNATE_USERNAME, self.OLD_PASSWORD, self.NEW_EMAIL)
 
         # Send the view the email address tied to the inactive user
         response = self._change_password(email=self.NEW_EMAIL)
-        self.assertEqual(response.status_code, 400)
+
+        # Expect that the activation email is still sent,
+        # since the user may have lost the original activation email.
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_password_change_no_user(self):
         # Log out the user created during test setup
@@ -313,25 +182,6 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
         self.assertEqual(response.status_code, 403)
 
     @ddt.data(
-        ('get', 'account_index', []),
-        ('post', 'email_change_request', []),
-        ('get', 'email_change_confirm', [123])
-    )
-    @ddt.unpack
-    def test_require_login(self, method, url_name, args):
-        # Access the page while logged out
-        self.client.logout()
-        url = reverse(url_name, args=args)
-        response = getattr(self.client, method)(url, follow=True)
-
-        # Should have been redirected to the login page
-        self.assertEqual(len(response.redirect_chain), 1)
-        self.assertIn('accounts/login?next=', response.redirect_chain[0][0])
-
-    @ddt.data(
-        ('get', 'account_index', []),
-        ('post', 'email_change_request', []),
-        ('get', 'email_change_confirm', [123]),
         ('post', 'password_change_request', []),
     )
     @ddt.unpack
@@ -342,24 +192,6 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
         for method in wrong_methods:
             response = getattr(self.client, method)(url)
             self.assertEqual(response.status_code, 405)
-
-    def _assert_email(self, email, expected_to, expected_subject, expected_body):
-        """Check whether an email has the correct properties. """
-        self.assertEqual(email.to, expected_to)
-        self.assertIn(expected_subject, email.subject)
-        self.assertIn(expected_body, email.body)
-
-    def _change_email(self, new_email, password):
-        """Request to change the user's email. """
-        data = {}
-
-        if new_email is not None:
-            data['email'] = new_email
-        if password is not None:
-            # We can't pass a Unicode object to urlencode, so we encode the Unicode object
-            data['password'] = password.encode('utf-8')
-
-        return self.client.post(path=reverse('email_change_request'), data=data)
 
     def _change_password(self, email=None):
         """Request to change the user's password. """
@@ -372,29 +204,35 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
 
 
 @ddt.ddt
-@override_settings(MODULESTORE=MODULESTORE_CONFIG)
-class StudentAccountLoginAndRegistrationTest(ModuleStoreTestCase):
+class StudentAccountLoginAndRegistrationTest(ThirdPartyAuthTestMixin, UrlResetMixin, ModuleStoreTestCase):
     """ Tests for the student account views that update the user's account information. """
 
     USERNAME = "bob"
     EMAIL = "bob@example.com"
     PASSWORD = "password"
 
+    @mock.patch.dict(settings.FEATURES, {'EMBARGO': True})
+    def setUp(self):
+        super(StudentAccountLoginAndRegistrationTest, self).setUp('embargo')
+        # For these tests, two third party auth providers are enabled by default:
+        self.configure_google_provider(enabled=True)
+        self.configure_facebook_provider(enabled=True)
+
     @ddt.data(
-        ("account_login", "login"),
-        ("account_register", "register"),
+        ("signin_user", "login"),
+        ("register_user", "register"),
     )
     @ddt.unpack
     def test_login_and_registration_form(self, url_name, initial_mode):
         response = self.client.get(reverse(url_name))
-        expected_data = u"data-initial-mode=\"{mode}\"".format(mode=initial_mode)
+        expected_data = '"initial_mode": "{mode}"'.format(mode=initial_mode)
         self.assertContains(response, expected_data)
 
-    @ddt.data("account_login", "account_register")
+    @ddt.data("signin_user", "register_user")
     def test_login_and_registration_form_already_authenticated(self, url_name):
         # Create/activate a new account and log in
-        activation_key = account_api.create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
-        account_api.activate_account(activation_key)
+        activation_key = create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
+        activate_account(activation_key)
         result = self.client.login(username=self.USERNAME, password=self.PASSWORD)
         self.assertTrue(result)
 
@@ -402,168 +240,300 @@ class StudentAccountLoginAndRegistrationTest(ModuleStoreTestCase):
         response = self.client.get(reverse(url_name))
         self.assertRedirects(response, reverse("dashboard"))
 
+    @ddt.data(
+        (False, "signin_user"),
+        (False, "register_user"),
+        (True, "signin_user"),
+        (True, "register_user"),
+    )
+    @ddt.unpack
+    def test_login_and_registration_form_signin_preserves_params(self, is_edx_domain, url_name):
+        params = [
+            ('course_id', 'edX/DemoX/Demo_Course'),
+            ('enrollment_action', 'enroll'),
+        ]
+
+        # The response should have a "Sign In" button with the URL
+        # that preserves the querystring params
+        with with_edx_domain_context(is_edx_domain):
+            response = self.client.get(reverse(url_name), params)
+
+        expected_url = '/login?{}'.format(self._finish_auth_url_param(params + [('next', '/dashboard')]))
+        self.assertContains(response, expected_url)
+
+        # Add additional parameters:
+        params = [
+            ('course_id', 'edX/DemoX/Demo_Course'),
+            ('enrollment_action', 'enroll'),
+            ('course_mode', CourseMode.DEFAULT_MODE_SLUG),
+            ('email_opt_in', 'true'),
+            ('next', '/custom/final/destination')
+        ]
+
+        # Verify that this parameter is also preserved
+        with with_edx_domain_context(is_edx_domain):
+            response = self.client.get(reverse(url_name), params)
+
+        expected_url = '/login?{}'.format(self._finish_auth_url_param(params))
+        self.assertContains(response, expected_url)
+
     @mock.patch.dict(settings.FEATURES, {"ENABLE_THIRD_PARTY_AUTH": False})
-    @ddt.data("account_login", "account_register")
+    @ddt.data("signin_user", "register_user")
     def test_third_party_auth_disabled(self, url_name):
         response = self.client.get(reverse(url_name))
-        self._assert_third_party_auth_data(response, None, [])
+        self._assert_third_party_auth_data(response, None, None, [])
 
     @ddt.data(
-        ("account_login", None, None),
-        ("account_register", None, None),
-        ("account_login", "google-oauth2", "Google"),
-        ("account_register", "google-oauth2", "Google"),
-        ("account_login", "facebook", "Facebook"),
-        ("account_register", "facebook", "Facebook"),
+        ("signin_user", None, None),
+        ("register_user", None, None),
+        ("signin_user", "google-oauth2", "Google"),
+        ("register_user", "google-oauth2", "Google"),
+        ("signin_user", "facebook", "Facebook"),
+        ("register_user", "facebook", "Facebook"),
     )
     @ddt.unpack
     def test_third_party_auth(self, url_name, current_backend, current_provider):
+        params = [
+            ('course_id', 'course-v1:Org+Course+Run'),
+            ('enrollment_action', 'enroll'),
+            ('course_mode', CourseMode.DEFAULT_MODE_SLUG),
+            ('email_opt_in', 'true'),
+            ('next', '/custom/final/destination'),
+        ]
+
         # Simulate a running pipeline
         if current_backend is not None:
             pipeline_target = "student_account.views.third_party_auth.pipeline"
             with simulate_running_pipeline(pipeline_target, current_backend):
-                response = self.client.get(reverse(url_name))
+                response = self.client.get(reverse(url_name), params)
 
         # Do NOT simulate a running pipeline
         else:
-            response = self.client.get(reverse(url_name))
+            response = self.client.get(reverse(url_name), params)
 
         # This relies on the THIRD_PARTY_AUTH configuration in the test settings
         expected_providers = [
             {
+                "id": "oa2-facebook",
                 "name": "Facebook",
-                "iconClass": "icon-facebook",
-                "loginUrl": self._third_party_login_url("facebook", "account_login"),
-                "registerUrl": self._third_party_login_url("facebook", "account_register")
+                "iconClass": "fa-facebook",
+                "loginUrl": self._third_party_login_url("facebook", "login", params),
+                "registerUrl": self._third_party_login_url("facebook", "register", params)
             },
             {
+                "id": "oa2-google-oauth2",
                 "name": "Google",
-                "iconClass": "icon-google-plus",
-                "loginUrl": self._third_party_login_url("google-oauth2", "account_login"),
-                "registerUrl": self._third_party_login_url("google-oauth2", "account_register")
+                "iconClass": "fa-google-plus",
+                "loginUrl": self._third_party_login_url("google-oauth2", "login", params),
+                "registerUrl": self._third_party_login_url("google-oauth2", "register", params)
             }
         ]
-        self._assert_third_party_auth_data(response, current_provider, expected_providers)
+        self._assert_third_party_auth_data(response, current_backend, current_provider, expected_providers)
 
-    @ddt.data([], ["honor"], ["honor", "verified", "audit"], ["professional"])
-    def test_third_party_auth_course_id_verified(self, modes):
-        # Create a course with the specified course modes
-        course = CourseFactory.create()
-        for slug in modes:
-            CourseModeFactory.create(
-                course_id=course.id,
-                mode_slug=slug,
-                mode_display_name=slug
-            )
+    def test_hinted_login(self):
+        params = [("next", "/courses/something/?tpa_hint=oa2-google-oauth2")]
+        response = self.client.get(reverse('signin_user'), params)
+        self.assertContains(response, '"third_party_auth_hint": "oa2-google-oauth2"')
 
-        # Verify that the entry URL for third party auth
-        # contains the course ID and redirects to the track selection page.
-        course_modes_choose_url = reverse(
-            "course_modes_choose",
-            kwargs={"course_id": unicode(course.id)}
+    @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
+    def test_microsite_uses_old_login_page(self):
+        # Retrieve the login page from a microsite domain
+        # and verify that we're served the old page.
+        resp = self.client.get(
+            reverse("signin_user"),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
         )
-        expected_providers = [
-            {
-                "name": "Facebook",
-                "iconClass": "icon-facebook",
-                "loginUrl": self._third_party_login_url(
-                    "facebook", "account_login",
-                    course_id=unicode(course.id),
-                    redirect_url=course_modes_choose_url
-                ),
-                "registerUrl": self._third_party_login_url(
-                    "facebook", "account_register",
-                    course_id=unicode(course.id),
-                    redirect_url=course_modes_choose_url
-                )
-            },
-            {
-                "name": "Google",
-                "iconClass": "icon-google-plus",
-                "loginUrl": self._third_party_login_url(
-                    "google-oauth2", "account_login",
-                    course_id=unicode(course.id),
-                    redirect_url=course_modes_choose_url
-                ),
-                "registerUrl": self._third_party_login_url(
-                    "google-oauth2", "account_register",
-                    course_id=unicode(course.id),
-                    redirect_url=course_modes_choose_url
-                )
-            }
-        ]
+        self.assertContains(resp, "Log into your Test Microsite Account")
+        self.assertContains(resp, "login-form")
 
-        # Verify that the login page contains the correct provider URLs
-        response = self.client.get(reverse("account_login"), {"course_id": unicode(course.id)})
-        self._assert_third_party_auth_data(response, None, expected_providers)
+    def test_microsite_uses_old_register_page(self):
+        # Retrieve the register page from a microsite domain
+        # and verify that we're served the old page.
+        resp = self.client.get(
+            reverse("register_user"),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
+        )
+        self.assertContains(resp, "Register for Test Microsite")
+        self.assertContains(resp, "register-form")
 
-    def test_third_party_auth_course_id_shopping_cart(self):
-        # Create a course with a white-label course mode
-        course = CourseFactory.create()
-        CourseModeFactory.create(
-            course_id=course.id,
-            mode_slug="honor",
-            mode_display_name="Honor",
-            min_price=100
+    def test_login_registration_xframe_protected(self):
+        resp = self.client.get(
+            reverse("register_user"),
+            {},
+            HTTP_REFERER="http://localhost/iframe"
         )
 
-        # Verify that the entry URL for third party auth
-        # contains the course ID and redirects to the shopping cart
-        shoppingcart_url = reverse("shoppingcart.views.show_cart")
-        expected_providers = [
-            {
-                "name": "Facebook",
-                "iconClass": "icon-facebook",
-                "loginUrl": self._third_party_login_url(
-                    "facebook", "account_login",
-                    course_id=unicode(course.id),
-                    redirect_url=shoppingcart_url
-                ),
-                "registerUrl": self._third_party_login_url(
-                    "facebook", "account_register",
-                    course_id=unicode(course.id),
-                    redirect_url=shoppingcart_url
-                )
-            },
-            {
-                "name": "Google",
-                "iconClass": "icon-google-plus",
-                "loginUrl": self._third_party_login_url(
-                    "google-oauth2", "account_login",
-                    course_id=unicode(course.id),
-                    redirect_url=shoppingcart_url
-                ),
-                "registerUrl": self._third_party_login_url(
-                    "google-oauth2", "account_register",
-                    course_id=unicode(course.id),
-                    redirect_url=shoppingcart_url
-                )
-            }
-        ]
+        self.assertEqual(resp['X-Frame-Options'], 'DENY')
 
-        # Verify that the login page contains the correct provider URLs
-        response = self.client.get(reverse("account_login"), {"course_id": unicode(course.id)})
-        self._assert_third_party_auth_data(response, None, expected_providers)
+        self.configure_lti_provider(name='Test', lti_hostname='localhost', lti_consumer_key='test_key', enabled=True)
 
-    def _assert_third_party_auth_data(self, response, current_provider, providers):
+        resp = self.client.get(
+            reverse("register_user"),
+            HTTP_REFERER="http://localhost/iframe"
+        )
+
+        self.assertEqual(resp['X-Frame-Options'], 'ALLOW')
+
+    def _assert_third_party_auth_data(self, response, current_backend, current_provider, providers):
         """Verify that third party auth info is rendered correctly in a DOM data attribute. """
-        expected_data = u"data-third-party-auth='{auth_info}'".format(
-            auth_info=json.dumps({
-                "currentProvider": current_provider,
-                "providers": providers
-            })
+        finish_auth_url = None
+        if current_backend:
+            finish_auth_url = reverse("social:complete", kwargs={"backend": current_backend}) + "?"
+
+        auth_info = {
+            "currentProvider": current_provider,
+            "providers": providers,
+            "secondaryProviders": [],
+            "finishAuthUrl": finish_auth_url,
+            "errorMessage": None,
+        }
+        auth_info = dump_js_escaped_json(auth_info)
+
+        expected_data = '"third_party_auth": {auth_info}'.format(
+            auth_info=auth_info
         )
+
         self.assertContains(response, expected_data)
 
-    def _third_party_login_url(self, backend_name, auth_entry, course_id=None, redirect_url=None):
+    def _third_party_login_url(self, backend_name, auth_entry, login_params):
         """Construct the login URL to start third party authentication. """
-        params = [("auth_entry", auth_entry)]
-        if redirect_url:
-            params.append(("next", redirect_url))
-        if course_id:
-            params.append(("enroll_course_id", course_id))
-
-        return u"{url}?{params}".format(
+        return u"{url}?auth_entry={auth_entry}&{param_str}".format(
             url=reverse("social:begin", kwargs={"backend": backend_name}),
-            params=urlencode(params)
+            auth_entry=auth_entry,
+            param_str=self._finish_auth_url_param(login_params),
         )
+
+    def _finish_auth_url_param(self, params):
+        """
+        Make the next=... URL parameter that indicates where the user should go next.
+
+        >>> _finish_auth_url_param([('next', '/dashboard')])
+        '/account/finish_auth?next=%2Fdashboard'
+        """
+        return urlencode({
+            'next': '/account/finish_auth?{}'.format(urlencode(params))
+        })
+
+
+class AccountSettingsViewTest(ThirdPartyAuthTestMixin, TestCase):
+    """ Tests for the account settings view. """
+
+    USERNAME = 'student'
+    PASSWORD = 'password'
+    FIELDS = [
+        'country',
+        'gender',
+        'language',
+        'level_of_education',
+        'password',
+        'year_of_birth',
+        'preferred_language',
+    ]
+
+    @mock.patch("django.conf.settings.MESSAGE_STORAGE", 'django.contrib.messages.storage.cookie.CookieStorage')
+    def setUp(self):
+        super(AccountSettingsViewTest, self).setUp()
+        self.user = UserFactory.create(username=self.USERNAME, password=self.PASSWORD)
+        self.client.login(username=self.USERNAME, password=self.PASSWORD)
+
+        self.request = HttpRequest()
+        self.request.user = self.user
+
+        # For these tests, two third party auth providers are enabled by default:
+        self.configure_google_provider(enabled=True)
+        self.configure_facebook_provider(enabled=True)
+
+        # Python-social saves auth failure notifcations in Django messages.
+        # See pipeline.get_duplicate_provider() for details.
+        self.request.COOKIES = {}
+        MessageMiddleware().process_request(self.request)
+        messages.error(self.request, 'Facebook is already in use.', extra_tags='Auth facebook')
+
+    def test_context(self):
+
+        context = account_settings_context(self.request)
+
+        user_accounts_api_url = reverse("accounts_api", kwargs={'username': self.user.username})
+        self.assertEqual(context['user_accounts_api_url'], user_accounts_api_url)
+
+        user_preferences_api_url = reverse('preferences_api', kwargs={'username': self.user.username})
+        self.assertEqual(context['user_preferences_api_url'], user_preferences_api_url)
+
+        for attribute in self.FIELDS:
+            self.assertIn(attribute, context['fields'])
+
+        self.assertEqual(
+            context['user_accounts_api_url'], reverse("accounts_api", kwargs={'username': self.user.username})
+        )
+        self.assertEqual(
+            context['user_preferences_api_url'], reverse('preferences_api', kwargs={'username': self.user.username})
+        )
+
+        self.assertEqual(context['duplicate_provider'], 'facebook')
+        self.assertEqual(context['auth']['providers'][0]['name'], 'Facebook')
+        self.assertEqual(context['auth']['providers'][1]['name'], 'Google')
+
+    def test_view(self):
+
+        view_path = reverse('account_settings')
+        response = self.client.get(path=view_path)
+
+        for attribute in self.FIELDS:
+            self.assertIn(attribute, response.content)
+
+
+@override_settings(SITE_NAME=settings.MICROSITE_LOGISTRATION_HOSTNAME)
+class MicrositeLogistrationTests(TestCase):
+    """
+    Test to validate that microsites can display the logistration page
+    """
+
+    def test_login_page(self):
+        """
+        Make sure that we get the expected logistration page on our specialized
+        microsite
+        """
+
+        resp = self.client.get(
+            reverse('signin_user'),
+            HTTP_HOST=settings.MICROSITE_LOGISTRATION_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertIn('<div id="login-and-registration-container"', resp.content)
+
+    def test_registration_page(self):
+        """
+        Make sure that we get the expected logistration page on our specialized
+        microsite
+        """
+
+        resp = self.client.get(
+            reverse('register_user'),
+            HTTP_HOST=settings.MICROSITE_LOGISTRATION_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertIn('<div id="login-and-registration-container"', resp.content)
+
+    @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
+    def test_no_override(self):
+        """
+        Make sure we get the old style login/registration if we don't override
+        """
+
+        resp = self.client.get(
+            reverse('signin_user'),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertNotIn('<div id="login-and-registration-container"', resp.content)
+
+        resp = self.client.get(
+            reverse('register_user'),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertNotIn('<div id="login-and-registration-container"', resp.content)

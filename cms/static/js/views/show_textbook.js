@@ -1,4 +1,5 @@
-define(["js/views/baseview", "underscore", "gettext", "js/views/feedback_notification", "js/views/feedback_prompt"],
+define(["js/views/baseview", "underscore", "gettext", "common/js/components/views/feedback_notification",
+        "common/js/components/views/feedback_prompt"],
         function(BaseView, _, gettext, NotificationView, PromptView) {
     var ShowTextbook = BaseView.extend({
         initialize: function() {
@@ -37,7 +38,7 @@ define(["js/views/baseview", "underscore", "gettext", "js/views/feedback_notific
                         click: function(view) {
                             view.hide();
                             var delmsg = new NotificationView.Mini({
-                                title: gettext("Deleting") + "&hellip;"
+                                title: gettext("Deleting")
                             }).show();
                             textbook.destroy({
                                 complete: function() {

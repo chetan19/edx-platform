@@ -7,7 +7,7 @@ import unittest
 import copy
 
 from xmodule.crowdsource_hinter import CrowdsourceHinterModule
-from xmodule.vertical_module import VerticalModule, VerticalDescriptor
+from xmodule.vertical_block import VerticalBlock
 from xmodule.x_module import STUDENT_VIEW
 from xblock.field_data import DictFieldData
 from xblock.fragment import Fragment
@@ -203,8 +203,8 @@ class VerticalWithModulesFactory(object):
         """Make a vertical."""
         field_data = {'data': VerticalWithModulesFactory.sample_problem_xml}
         system = get_test_system()
-        descriptor = VerticalDescriptor.from_xml(VerticalWithModulesFactory.sample_problem_xml, system)
-        module = VerticalModule(system, descriptor, field_data)
+        descriptor = VerticalBlock.parse_xml(VerticalWithModulesFactory.sample_problem_xml, system)
+        module = VerticalBlock(system, descriptor, field_data)
 
         return module
 
@@ -554,9 +554,9 @@ class CrowdsourceHinterTest(unittest.TestCase):
         mock_module.get_hint = fake_get_hint
         json_in = {'problem_name': '42.5'}
         out = json.loads(mock_module.handle_ajax('get_hint', json_in))['contents']
-        self.assertTrue('This is the best hint.' in out)
-        self.assertTrue('A random hint' in out)
-        self.assertTrue('Another random hint' in out)
+        self.assertIn('This is the best hint.', out)
+        self.assertIn('A random hint', out)
+        self.assertIn('Another random hint', out)
 
     def test_template_feedback(self):
         """

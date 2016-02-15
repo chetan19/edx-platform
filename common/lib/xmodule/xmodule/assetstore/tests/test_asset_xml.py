@@ -2,7 +2,7 @@
 Test for asset XML generation / parsing.
 """
 
-from path import path
+from path import Path as path
 from lxml import etree
 from contracts import ContractNotRespected
 import unittest
@@ -56,6 +56,18 @@ class TestAssetXml(unittest.TestCase):
             orig_value = getattr(asset_md, attr)
             new_value = getattr(new_asset_md, attr)
             self.assertEqual(orig_value, new_value)
+
+    def test_export_with_None_value(self):
+        """
+        Export and import a single AssetMetadata to XML with a None created_by field, without causing an exception.
+        """
+        asset_md = AssetMetadata(
+            self.course_id.make_asset_key('asset', 'none_value'),
+            created_by=None,
+        )
+        asset = etree.Element("asset")
+        asset_md.to_xml(asset)
+        asset_md.from_xml(asset)
 
     def test_export_all_assets_to_xml(self):
         """

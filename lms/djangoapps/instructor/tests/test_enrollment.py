@@ -1,37 +1,50 @@
+# -*- coding: utf-8 -*-
 """
 Unit tests for instructor.enrollment methods.
 """
 
 import json
 import mock
+from mock import patch
 from abc import ABCMeta
 from courseware.models import StudentModule
 from django.conf import settings
 from django.test import TestCase
-from django.test.utils import override_settings
+from django.utils.translation import get_language
+from django.utils.translation import override as override_language
+from nose.plugins.attrib import attr
+from ccx_keys.locator import CCXLocator
 from student.tests.factories import UserFactory
-from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.tests.django_utils import TEST_DATA_MOCK_MODULESTORE
+from xmodule.modulestore.django import modulestore
+from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 
+from lms.djangoapps.ccx.tests.factories import CcxFactory
 from student.models import CourseEnrollment, CourseEnrollmentAllowed
+from student.roles import CourseCcxCoachRole
+from student.tests.factories import (
+    AdminFactory
+)
 from instructor.enrollment import (
     EmailEnrollmentState,
     enroll_email,
     get_email_params,
     reset_student_attempts,
     send_beta_role_email,
-    unenroll_email
+    unenroll_email,
+    render_message_to_string,
 )
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 
 from submissions import api as sub_api
 from student.models import anonymous_id_for_user
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase, TEST_DATA_SPLIT_MODULESTORE
 
 
+@attr('shard_1')
 class TestSettableEnrollmentState(TestCase):
     """ Test the basis class for enrollment tests. """
     def setUp(self):
+        super(TestSettableEnrollmentState, self).setUp()
         self.course_key = SlashSeparatedCourseKey('Robot', 'fAKE', 'C-%-se-%-ID')
 
     def test_mes_create(self):
@@ -62,6 +75,7 @@ class TestEnrollmentChangeBase(TestCase):
     __metaclass__ = ABCMeta
 
     def setUp(self):
+        super(TestEnrollmentChangeBase, self).setUp()
         self.course_key = SlashSeparatedCourseKey('Robot', 'fAKE', 'C-%-se-%-ID')
 
     def _run_state_change_test(self, before_ideal, after_ideal, action):
@@ -90,6 +104,7 @@ class TestEnrollmentChangeBase(TestCase):
         self.assertEqual(after, after_ideal)
 
 
+@attr('shard_1')
 class TestInstructorEnrollDB(TestEnrollmentChangeBase):
     """ Test instructor.enrollment.enroll_email """
     def test_enroll(self):
@@ -207,6 +222,7 @@ class TestInstructorEnrollDB(TestEnrollmentChangeBase):
         return self._run_state_change_test(before_ideal, after_ideal, action)
 
 
+@attr('shard_1')
 class TestInstructorUnenrollDB(TestEnrollmentChangeBase):
     """ Test instructor.enrollment.unenroll_email """
     def test_unenroll(self):
@@ -286,33 +302,105 @@ class TestInstructorUnenrollDB(TestEnrollmentChangeBase):
         return self._run_state_change_test(before_ideal, after_ideal, action)
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
-class TestInstructorEnrollmentStudentModule(TestCase):
+@attr('shard_1')
+class TestInstructorEnrollmentStudentModule(SharedModuleStoreTestCase):
     """ Test student module manipulations. """
+    @classmethod
+    def setUpClass(cls):
+        super(TestInstructorEnrollmentStudentModule, cls).setUpClass()
+        cls.course = CourseFactory(
+            name='fake',
+            org='course',
+            run='id',
+        )
+        # pylint: disable=no-member
+        cls.course_key = cls.course.location.course_key
+        with cls.store.bulk_operations(cls.course.id, emit_signals=False):
+            cls.parent = ItemFactory(
+                category="library_content",
+                parent=cls.course,
+                publish_item=True,
+            )
+            cls.child = ItemFactory(
+                category="html",
+                parent=cls.parent,
+                publish_item=True,
+            )
+            cls.unrelated = ItemFactory(
+                category="html",
+                parent=cls.course,
+                publish_item=True,
+            )
+
     def setUp(self):
-        self.course_key = SlashSeparatedCourseKey('fake', 'course', 'id')
+        super(TestInstructorEnrollmentStudentModule, self).setUp()
+
+        self.user = UserFactory()
+
+        parent_state = json.dumps({'attempts': 32, 'otherstuff': 'alsorobots'})
+        child_state = json.dumps({'attempts': 10, 'whatever': 'things'})
+        unrelated_state = json.dumps({'attempts': 12, 'brains': 'zombie'})
+        StudentModule.objects.create(
+            student=self.user,
+            course_id=self.course_key,
+            module_state_key=self.parent.location,
+            state=parent_state,
+        )
+        StudentModule.objects.create(
+            student=self.user,
+            course_id=self.course_key,
+            module_state_key=self.child.location,
+            state=child_state,
+        )
+        StudentModule.objects.create(
+            student=self.user,
+            course_id=self.course_key,
+            module_state_key=self.unrelated.location,
+            state=unrelated_state,
+        )
 
     def test_reset_student_attempts(self):
-        user = UserFactory()
         msk = self.course_key.make_usage_key('dummy', 'module')
         original_state = json.dumps({'attempts': 32, 'otherstuff': 'alsorobots'})
-        StudentModule.objects.create(student=user, course_id=self.course_key, module_state_key=msk, state=original_state)
+        StudentModule.objects.create(
+            student=self.user,
+            course_id=self.course_key,
+            module_state_key=msk,
+            state=original_state
+        )
         # lambda to reload the module state from the database
-        module = lambda: StudentModule.objects.get(student=user, course_id=self.course_key, module_state_key=msk)
+        module = lambda: StudentModule.objects.get(student=self.user, course_id=self.course_key, module_state_key=msk)
         self.assertEqual(json.loads(module().state)['attempts'], 32)
-        reset_student_attempts(self.course_key, user, msk)
+        reset_student_attempts(self.course_key, self.user, msk)
         self.assertEqual(json.loads(module().state)['attempts'], 0)
 
     def test_delete_student_attempts(self):
-        user = UserFactory()
         msk = self.course_key.make_usage_key('dummy', 'module')
         original_state = json.dumps({'attempts': 32, 'otherstuff': 'alsorobots'})
-        StudentModule.objects.create(student=user, course_id=self.course_key, module_state_key=msk, state=original_state)
-        self.assertEqual(StudentModule.objects.filter(student=user, course_id=self.course_key, module_state_key=msk).count(), 1)
-        reset_student_attempts(self.course_key, user, msk, delete_module=True)
-        self.assertEqual(StudentModule.objects.filter(student=user, course_id=self.course_key, module_state_key=msk).count(), 0)
+        StudentModule.objects.create(
+            student=self.user,
+            course_id=self.course_key,
+            module_state_key=msk,
+            state=original_state
+        )
+        self.assertEqual(
+            StudentModule.objects.filter(
+                student=self.user,
+                course_id=self.course_key,
+                module_state_key=msk
+            ).count(), 1)
+        reset_student_attempts(self.course_key, self.user, msk, delete_module=True)
+        self.assertEqual(
+            StudentModule.objects.filter(
+                student=self.user,
+                course_id=self.course_key,
+                module_state_key=msk
+            ).count(), 0)
 
-    def test_delete_submission_scores(self):
+    # Disable the score change signal to prevent other components from being
+    # pulled into tests.
+    @mock.patch('courseware.module_render.SCORE_CHANGED.send')
+    def test_delete_submission_scores(self, _lti_mock):
         user = UserFactory()
         problem_location = self.course_key.make_usage_key('dummy', 'module')
 
@@ -343,6 +431,61 @@ class TestInstructorEnrollmentStudentModule(TestCase):
         # Verify that the student's scores have been reset in the submissions API
         score = sub_api.get_score(student_item)
         self.assertIs(score, None)
+
+    def get_state(self, location):
+        """Reload and grab the module state from the database"""
+        return StudentModule.objects.get(
+            student=self.user, course_id=self.course_key, module_state_key=location
+        ).state
+
+    def test_reset_student_attempts_children(self):
+        parent_state = json.loads(self.get_state(self.parent.location))
+        self.assertEqual(parent_state['attempts'], 32)
+        self.assertEqual(parent_state['otherstuff'], 'alsorobots')
+
+        child_state = json.loads(self.get_state(self.child.location))
+        self.assertEqual(child_state['attempts'], 10)
+        self.assertEqual(child_state['whatever'], 'things')
+
+        unrelated_state = json.loads(self.get_state(self.unrelated.location))
+        self.assertEqual(unrelated_state['attempts'], 12)
+        self.assertEqual(unrelated_state['brains'], 'zombie')
+
+        reset_student_attempts(self.course_key, self.user, self.parent.location)
+
+        parent_state = json.loads(self.get_state(self.parent.location))
+        self.assertEqual(json.loads(self.get_state(self.parent.location))['attempts'], 0)
+        self.assertEqual(parent_state['otherstuff'], 'alsorobots')
+
+        child_state = json.loads(self.get_state(self.child.location))
+        self.assertEqual(child_state['attempts'], 0)
+        self.assertEqual(child_state['whatever'], 'things')
+
+        unrelated_state = json.loads(self.get_state(self.unrelated.location))
+        self.assertEqual(unrelated_state['attempts'], 12)
+        self.assertEqual(unrelated_state['brains'], 'zombie')
+
+    def test_delete_submission_scores_attempts_children(self):
+        parent_state = json.loads(self.get_state(self.parent.location))
+        self.assertEqual(parent_state['attempts'], 32)
+        self.assertEqual(parent_state['otherstuff'], 'alsorobots')
+
+        child_state = json.loads(self.get_state(self.child.location))
+        self.assertEqual(child_state['attempts'], 10)
+        self.assertEqual(child_state['whatever'], 'things')
+
+        unrelated_state = json.loads(self.get_state(self.unrelated.location))
+        self.assertEqual(unrelated_state['attempts'], 12)
+        self.assertEqual(unrelated_state['brains'], 'zombie')
+
+        reset_student_attempts(self.course_key, self.user, self.parent.location, delete_module=True)
+
+        self.assertRaises(StudentModule.DoesNotExist, self.get_state, self.parent.location)
+        self.assertRaises(StudentModule.DoesNotExist, self.get_state, self.child.location)
+
+        unrelated_state = json.loads(self.get_state(self.unrelated.location))
+        self.assertEqual(unrelated_state['attempts'], 12)
+        self.assertEqual(unrelated_state['brains'], 'zombie')
 
 
 class EnrollmentObjects(object):
@@ -415,12 +558,14 @@ class SettableEnrollmentState(EmailEnrollmentState):
             return EnrollmentObjects(email, None, None, None)
 
 
+@attr('shard_1')
 class TestSendBetaRoleEmail(TestCase):
     """
     Test edge cases for `send_beta_role_email`
     """
 
     def setUp(self):
+        super(TestSendBetaRoleEmail, self).setUp()
         self.user = UserFactory.create()
         self.email_params = {'course': 'Robot Super Course'}
 
@@ -431,25 +576,77 @@ class TestSendBetaRoleEmail(TestCase):
             send_beta_role_email(bad_action, self.user, self.email_params)
 
 
-@override_settings(MODULESTORE=TEST_DATA_MOCK_MODULESTORE)
-class TestGetEmailParams(ModuleStoreTestCase):
+@attr('shard_1')
+class TestGetEmailParamsCCX(SharedModuleStoreTestCase):
     """
-    Test what URLs the function get_email_params returns under different
-    production-like conditions.
+    Test what URLs the function get_email_params for CCX student enrollment.
     """
+
+    MODULESTORE = TEST_DATA_SPLIT_MODULESTORE
+
+    @classmethod
+    def setUpClass(cls):
+        super(TestGetEmailParamsCCX, cls).setUpClass()
+        cls.course = CourseFactory.create()
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
     def setUp(self):
-        self.course = CourseFactory.create()
+        super(TestGetEmailParamsCCX, self).setUp()
+        self.coach = AdminFactory.create()
+        role = CourseCcxCoachRole(self.course.id)
+        role.add_users(self.coach)
+        self.ccx = CcxFactory(course_id=self.course.id, coach=self.coach)
+        self.course_key = CCXLocator.from_course_locator(self.course.id, self.ccx.id)
 
         # Explicitly construct what we expect the course URLs to be
         site = settings.SITE_NAME
         self.course_url = u'https://{}/courses/{}/'.format(
             site,
-            self.course.id.to_deprecated_string()
+            self.course_key
         )
         self.course_about_url = self.course_url + 'about'
-        self.registration_url = u'https://{}/register'.format(
-            site,
+        self.registration_url = u'https://{}/register'.format(site)
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def test_ccx_enrollment_email_params(self):
+        # For a CCX, what do we expect to get for the URLs?
+        # Also make sure `auto_enroll` is properly passed through.
+        result = get_email_params(
+            self.course,
+            True,
+            course_key=self.course_key,
+            display_name=self.ccx.display_name
         )
+
+        self.assertEqual(result['display_name'], self.ccx.display_name)
+        self.assertEqual(result['auto_enroll'], True)
+        self.assertEqual(result['course_about_url'], self.course_about_url)
+        self.assertEqual(result['registration_url'], self.registration_url)
+        self.assertEqual(result['course_url'], self.course_url)
+
+
+@attr('shard_1')
+class TestGetEmailParams(SharedModuleStoreTestCase):
+    """
+    Test what URLs the function get_email_params returns under different
+    production-like conditions.
+    """
+    @classmethod
+    def setUpClass(cls):
+        super(TestGetEmailParams, cls).setUpClass()
+        cls.course = CourseFactory.create()
+
+        # Explicitly construct what we expect the course URLs to be
+        site = settings.SITE_NAME
+        cls.course_url = u'https://{}/courses/{}/'.format(
+            site,
+            cls.course.id.to_deprecated_string()
+        )
+        cls.course_about_url = cls.course_url + 'about'
+        cls.registration_url = u'https://{}/register'.format(site)
+
+    def setUp(self):
+        super(TestGetEmailParams, self).setUp()
 
     def test_normal_params(self):
         # For a normal site, what do we expect to get for the URLs?
@@ -472,3 +669,150 @@ class TestGetEmailParams(ModuleStoreTestCase):
         self.assertEqual(result['course_about_url'], None)
         self.assertEqual(result['registration_url'], self.registration_url)
         self.assertEqual(result['course_url'], self.course_url)
+
+
+@attr('shard_1')
+class TestRenderMessageToString(SharedModuleStoreTestCase):
+    """
+    Test that email templates can be rendered in a language chosen manually.
+    Test CCX enrollmet email.
+    """
+    MODULESTORE = TEST_DATA_SPLIT_MODULESTORE
+
+    @classmethod
+    def setUpClass(cls):
+        super(TestRenderMessageToString, cls).setUpClass()
+        cls.course = CourseFactory.create()
+        cls.subject_template = 'emails/enroll_email_allowedsubject.txt'
+        cls.message_template = 'emails/enroll_email_allowedmessage.txt'
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def setUp(self):
+        super(TestRenderMessageToString, self).setUp()
+        coach = AdminFactory.create()
+        role = CourseCcxCoachRole(self.course.id)
+        role.add_users(coach)
+        self.ccx = CcxFactory(course_id=self.course.id, coach=coach)
+        self.course_key = CCXLocator.from_course_locator(self.course.id, self.ccx.id)
+
+    def get_email_params(self):
+        """
+        Returns a dictionary of parameters used to render an email.
+        """
+        email_params = get_email_params(self.course, True)
+        email_params["email_address"] = "user@example.com"
+        email_params["full_name"] = "Jean Reno"
+
+        return email_params
+
+    def get_email_params_ccx(self):
+        """
+        Returns a dictionary of parameters used to render an email for CCX.
+        """
+        email_params = get_email_params(
+            self.course,
+            True,
+            course_key=self.course_key,
+            display_name=self.ccx.display_name
+        )
+        email_params["email_address"] = "user@example.com"
+        email_params["full_name"] = "Jean Reno"
+
+        return email_params
+
+    def get_subject_and_message(self, language):
+        """
+        Returns the subject and message rendered in the specified language.
+        """
+        return render_message_to_string(
+            self.subject_template,
+            self.message_template,
+            self.get_email_params(),
+            language=language
+        )
+
+    def get_subject_and_message_ccx(self, subject_template, message_template):
+        """
+        Returns the subject and message rendered in the specified language for CCX.
+        """
+        return render_message_to_string(
+            subject_template,
+            message_template,
+            self.get_email_params_ccx()
+        )
+
+    def test_subject_and_message_translation(self):
+        subject, message = self.get_subject_and_message('fr')
+        language_after_rendering = get_language()
+
+        you_have_been_invited_in_french = u"Vous avez été invité"
+        self.assertIn(you_have_been_invited_in_french, subject)
+        self.assertIn(you_have_been_invited_in_french, message)
+        self.assertEqual(settings.LANGUAGE_CODE, language_after_rendering)
+
+    def test_platform_language_is_used_for_logged_in_user(self):
+        with override_language('zh_CN'):    # simulate a user login
+            subject, message = self.get_subject_and_message(None)
+            self.assertIn("You have been", subject)
+            self.assertIn("You have been", message)
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def test_render_enrollment_message_ccx_members(self):
+        """
+        Test enrollment email template renders for CCX.
+        For EDX members.
+        """
+        subject_template = 'emails/enroll_email_enrolledsubject.txt'
+        message_template = 'emails/enroll_email_enrolledmessage.txt'
+
+        subject, message = self.get_subject_and_message_ccx(subject_template, message_template)
+        self.assertIn(self.ccx.display_name, subject)
+        self.assertIn(self.ccx.display_name, message)
+        site = settings.SITE_NAME
+        course_url = u'https://{}/courses/{}/'.format(
+            site,
+            self.course_key
+        )
+        self.assertIn(course_url, message)
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def test_render_unenrollment_message_ccx_members(self):
+        """
+        Test unenrollment email template renders for CCX.
+        For EDX members.
+        """
+        subject_template = 'emails/unenroll_email_subject.txt'
+        message_template = 'emails/unenroll_email_enrolledmessage.txt'
+
+        subject, message = self.get_subject_and_message_ccx(subject_template, message_template)
+        self.assertIn(self.ccx.display_name, subject)
+        self.assertIn(self.ccx.display_name, message)
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def test_render_enrollment_message_ccx_non_members(self):
+        """
+        Test enrollment email template renders for CCX.
+        For non EDX members.
+        """
+        subject_template = 'emails/enroll_email_allowedsubject.txt'
+        message_template = 'emails/enroll_email_allowedmessage.txt'
+
+        subject, message = self.get_subject_and_message_ccx(subject_template, message_template)
+        self.assertIn(self.ccx.display_name, subject)
+        self.assertIn(self.ccx.display_name, message)
+        site = settings.SITE_NAME
+        registration_url = u'https://{}/register'.format(site)
+        self.assertIn(registration_url, message)
+
+    @patch.dict('django.conf.settings.FEATURES', {'CUSTOM_COURSES_EDX': True})
+    def test_render_unenrollment_message_ccx_non_members(self):
+        """
+        Test unenrollment email template renders for CCX.
+        For non EDX members.
+        """
+        subject_template = 'emails/unenroll_email_subject.txt'
+        message_template = 'emails/unenroll_email_allowedmessage.txt'
+
+        subject, message = self.get_subject_and_message_ccx(subject_template, message_template)
+        self.assertIn(self.ccx.display_name, subject)
+        self.assertIn(self.ccx.display_name, message)

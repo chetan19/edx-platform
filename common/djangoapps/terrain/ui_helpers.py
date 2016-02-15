@@ -1,5 +1,4 @@
 # pylint: disable=missing-docstring
-# pylint: disable=redefined-outer-name
 
 from lettuce import world
 
@@ -22,33 +21,33 @@ from selenium.common.exceptions import (
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from nose.tools import assert_true  # pylint: disable=no-name-in-module
+from nose.tools import assert_true
 
 GLOBAL_WAIT_FOR_TIMEOUT = 60
 
 REQUIREJS_WAIT = {
     # Settings - Schedule & Details
-    re.compile('^Schedule & Details Settings \|'): [
+    re.compile(r'^Schedule & Details Settings \|'): [
         "jquery", "js/base", "js/models/course",
         "js/models/settings/course_details", "js/views/settings/main"],
 
     # Settings - Advanced Settings
-    re.compile('^Advanced Settings \|'): [
+    re.compile(r'^Advanced Settings \|'): [
         "jquery", "js/base", "js/models/course", "js/models/settings/advanced",
         "js/views/settings/advanced", "codemirror"],
 
     # Unit page
-    re.compile('^Unit \|'): [
+    re.compile(r'^Unit \|'): [
         "jquery", "js/base", "js/models/xblock_info", "js/views/pages/container",
         "js/collections/component_template", "xmodule", "coffee/src/main", "xblock/cms.runtime.v1"],
 
     # Content - Outline
     # Note that calling your org, course number, or display name, 'course' will mess this up
-    re.compile('^Course Outline \|'): [
+    re.compile(r'^Course Outline \|'): [
         "js/base", "js/models/course", "js/models/location", "js/models/section"],
 
     # Dashboard
-    re.compile('^My Courses \|'): [
+    re.compile(r'^Studio Home \|'): [
         "js/sock", "gettext", "js/base",
         "jquery.ui", "coffee/src/main", "underscore"],
 
@@ -59,7 +58,7 @@ REQUIREJS_WAIT = {
     ],
 
     # Pages
-    re.compile('^Pages \|'): [
+    re.compile(r'^Pages \|'): [
         'js/models/explicit_url', 'coffee/src/views/tabs',
         'xmodule', 'coffee/src/main', 'xblock/cms.runtime.v1'
     ],

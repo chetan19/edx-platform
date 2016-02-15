@@ -9,22 +9,20 @@ general XBlock representation in this rather specialized formatting.
 from functools import partial
 
 from django.http import Http404, HttpResponse
+from mobile_api.models import MobileApiConfig
 
-from rest_framework import generics, permissions
-from rest_framework.authentication import OAuth2Authentication, SessionAuthentication
+from rest_framework import generics
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
-from opaque_keys.edx.keys import CourseKey
 from opaque_keys.edx.locator import BlockUsageLocator
 
 from xmodule.exceptions import NotFoundError
 from xmodule.modulestore.django import modulestore
 
-from mobile_api.utils import mobile_available_when_enrolled
-
+from ..utils import mobile_view, mobile_course_access
 from .serializers import BlockOutline, video_summary
 
 
+@mobile_view()
 class VideoSummaryList(generics.ListAPIView):
     """
     **Use Case**
@@ -32,115 +30,99 @@ class VideoSummaryList(generics.ListAPIView):
         Get a list of all videos in the specified course. You can use the
         video_url value to access the video file.
 
-    **Example request**:
+    **Example Request**
 
         GET /api/mobile/v0.5/video_outlines/courses/{organization}/{course_number}/{course_run}
 
     **Response Values**
 
-        An array of videos in the course. For each video:
+        If the request is successful, the request returns an HTTP 200 "OK"
+        response along with an array of videos in the course. The array
+        includes the following information for each video.
+
+            * named_path: An array that consists of the display names of the
+              courseware objects in the path to the video.
+            * path: An array that specifies the complete path to the video in
+              the courseware hierarchy. The array contains the following
+              values.
+
+                * category: The type of division in the course outline.
+                  Possible values are "chapter", "sequential", and "vertical".
+                * name: The display name for the object.
+                * id: The The unique identifier for the video.
 
             * section_url: The URL to the first page of the section that
               contains the video in the Learning Management System.
+            * summary: An array of data about the video that includes the
+              following values.
 
-            * path: An array containing category, name, and id values specifying the
-              complete path the the video in the courseware hierarchy. The
-              following categories values are included: "chapter", "sequential",
-              and "vertical". The name value is the display name for that object.
-
-            * unit_url: The URL to the unit contains the video in the Learning
-              Management System.
-
-            * named_path: An array consisting of the display names of the
-              courseware objects in the path to the video.
-
-            * summary:  An array of data about the video that includes:
-
-                * category:  The type of component, in this case always "video".
-
-                * video_thumbnail_url: The URL to the thumbnail image for the
-                  video, if available.
-
-                * language: The language code for the video.
-
-                * name:  The display name of the video.
-
-                * video_url: The URL to the video file. Use this value to access
-                  the video.
-
+                * category: The type of component. This value will always be "video".
                 * duration: The length of the video, if available.
-
+                * id: The unique identifier for the video.
+                * language: The language code for the video.
+                * name:  The display name of the video.
+                * size: The size of the video file.
                 * transcripts: An array of language codes and URLs to available
                   video transcripts. Use the URL value to access a transcript
                   for the video.
+                * video_thumbnail_url: The URL to the thumbnail image for the
+                  video, if available.
+                * video_url: The URL to the video file. Use this value to access
+                  the video.
 
-                * id: The unique identifier for the video.
-
-                * size: The size of the video file
+            * unit_url: The URL to the unit that contains the video in the Learning
+              Management System.
     """
-    authentication_classes = (OAuth2Authentication, SessionAuthentication)
-    permission_classes = (permissions.IsAuthenticated,)
 
-    def list(self, request, *args, **kwargs):
-        course_id = CourseKey.from_string(kwargs['course_id'])
-        course = get_mobile_course(course_id, request.user)
-
+    @mobile_course_access(depth=None)
+    def list(self, request, course, *args, **kwargs):
+        video_profiles = MobileApiConfig.get_video_profiles()
         video_outline = list(
             BlockOutline(
-                course_id,
+                course.id,
                 course,
-                {"video": partial(video_summary, course)},
+                {"video": partial(video_summary, video_profiles)},
                 request,
+                video_profiles,
             )
         )
         return Response(video_outline)
 
 
+@mobile_view()
 class VideoTranscripts(generics.RetrieveAPIView):
     """
     **Use Case**
 
-        Use to get a transcript for a specified video and language.
+        Get a transcript for a specified video and language.
 
-    **Example request**:
+    **Example request**
 
         GET /api/mobile/v0.5/video_outlines/transcripts/{organization}/{course_number}/{course_run}/{video ID}/{language code}
 
     **Response Values**
 
-        An HttpResponse with an SRT file download.
+        If the request is successful, the request returns an HTTP 200 "OK"
+        response along with an .srt file that you can download.
 
     """
-    authentication_classes = (OAuth2Authentication, SessionAuthentication)
-    permission_classes = (permissions.IsAuthenticated,)
 
-    def get(self, request, *args, **kwargs):
-        course_key = CourseKey.from_string(kwargs['course_id'])
+    @mobile_course_access()
+    def get(self, request, course, *args, **kwargs):
         block_id = kwargs['block_id']
         lang = kwargs['lang']
 
         usage_key = BlockUsageLocator(
-            course_key, block_type="video", block_id=block_id
+            course.id, block_type="video", block_id=block_id
         )
         try:
             video_descriptor = modulestore().get_item(usage_key)
-            content, filename, mimetype = video_descriptor.get_transcript(lang=lang)
+            transcripts = video_descriptor.get_transcripts_info()
+            content, filename, mimetype = video_descriptor.get_transcript(transcripts, lang=lang)
         except (NotFoundError, ValueError, KeyError):
             raise Http404(u"Transcript not found for {}, lang: {}".format(block_id, lang))
 
         response = HttpResponse(content, content_type=mimetype)
-        response['Content-Disposition'] = 'attachment; filename="{}"'.format(filename)
+        response['Content-Disposition'] = 'attachment; filename="{}"'.format(filename.encode('utf-8'))
 
         return response
-
-
-def get_mobile_course(course_id, user):
-    """
-    Return only a CourseDescriptor if the course is mobile-ready or if the
-    requesting user is a staff member.
-    """
-    course = modulestore().get_course(course_id, depth=None)
-    if mobile_available_when_enrolled(course, user):
-        return course
-
-    raise PermissionDenied(detail="Course not available on mobile.")

@@ -1,4 +1,5 @@
 import datetime
+import json
 
 import pytz
 
@@ -6,9 +7,10 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import redirect
 
-from django_future.csrf import ensure_csrf_cookie
+from django.views.decorators.csrf import ensure_csrf_cookie
 
 from edxmako.shortcuts import render_to_response
+from ipware.ip import get_ip
 
 from track import tracker
 from track import contexts
@@ -30,49 +32,52 @@ def _get_request_header(request, header_name, default=''):
         return default
 
 
-def _get_request_value(request, value_name, default=''):
-    """Helper method to get header values from a request's REQUEST dict, if present."""
-    if request is not None and hasattr(request, 'REQUEST') and value_name in request.REQUEST:
-        return request.REQUEST[value_name]
+def _get_request_ip(request, default=''):
+    """Helper method to get IP from a request's META dict, if present."""
+    if request is not None and hasattr(request, 'META'):
+        return get_ip(request)
     else:
         return default
 
 
+def _get_request_value(request, value_name, default=''):
+    """Helper method to get header values from a request's GET/POST dict, if present."""
+    if request is not None:
+        if request.method == 'GET':
+            return request.GET.get(value_name, default)
+        elif request.method == 'POST':
+            return request.POST.get(value_name, default)
+    return default
+
+
 def user_track(request):
     """
-    Log when POST call to "event" URL is made by a user. Uses request.REQUEST
-    to allow for GET calls.
+    Log when POST call to "event" URL is made by a user.
 
     GET or POST call should provide "event_type", "event", and "page" arguments.
     """
-    try:  # TODO: Do the same for many of the optional META parameters
+    try:
         username = request.user.username
     except:
         username = "anonymous"
 
+    name = _get_request_value(request, 'event_type')
+    data = _get_request_value(request, 'event', {})
     page = _get_request_value(request, 'page')
 
-    with eventtracker.get_tracker().context('edx.course.browser', contexts.course_context_from_url(page)):
-        context = eventtracker.get_tracker().resolve_context()
-        event = {
-            "username": username,
-            "session": context.get('session', ''),
-            "ip": _get_request_header(request, 'REMOTE_ADDR'),
-            "event_source": "browser",
-            "event_type": _get_request_value(request, 'event_type'),
-            "event": _get_request_value(request, 'event'),
-            "agent": _get_request_header(request, 'HTTP_USER_AGENT'),
-            "page": page,
-            "time": datetime.datetime.utcnow(),
-            "host": _get_request_header(request, 'SERVER_NAME'),
-            "context": context,
-        }
+    if isinstance(data, basestring) and len(data) > 0:
+        try:
+            data = json.loads(data)
+        except ValueError:
+            pass
 
-    # Some duplicated fields are passed into event-tracking via the context by track.middleware.
-    # Remove them from the event here since they are captured elsewhere.
-    shim.remove_shim_context(event)
+    context_override = contexts.course_context_from_url(page)
+    context_override['username'] = username
+    context_override['event_source'] = 'browser'
+    context_override['page'] = page
 
-    log_event(event)
+    with eventtracker.get_tracker().context('edx.course.browser', context_override):
+        eventtracker.emit(name=name, data=data)
 
     return HttpResponse('success')
 
@@ -94,11 +99,13 @@ def server_track(request, event_type, event, page=None):
     # define output:
     event = {
         "username": username,
-        "ip": _get_request_header(request, 'REMOTE_ADDR'),
+        "ip": _get_request_ip(request),
+        "referer": _get_request_header(request, 'HTTP_REFERER'),
+        "accept_language": _get_request_header(request, 'HTTP_ACCEPT_LANGUAGE'),
         "event_source": "server",
         "event_type": event_type,
         "event": event,
-        "agent": _get_request_header(request, 'HTTP_USER_AGENT'),
+        "agent": _get_request_header(request, 'HTTP_USER_AGENT').decode('latin1'),
         "page": page,
         "time": datetime.datetime.utcnow(),
         "host": _get_request_header(request, 'SERVER_NAME'),

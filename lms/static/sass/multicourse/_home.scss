@@ -1,5 +1,12 @@
+@import '../base/grid-settings';
+@import 'neat/neat'; // lib - Neat
+
+$title-left-margin: grid-width(3);
+$button-size: ($baseline*2.75);
+$course-search-input-height: ($button-size);
+
 .home {
-  padding: 0px;
+  padding: 0;
 
   > .container {
     @include box-sizing(border-box);
@@ -8,68 +15,128 @@
 
   > header {
     @include linear-gradient($homepage__header--gradient__color--alpha, $homepage__header--gradient__color--bravo);
+    @include clearfix();
     background-size: cover;
     background-image: $homepage-bg-image;
-    border-bottom: 1px solid $border-color-3;
-    box-shadow: 0 1px 0 0 $course-header-bg, inset 0 -1px 5px 0 rgba(0,0,0, 0.1);
-    @include clearfix;
-    height: 460px;
+    box-shadow: 0 1px 0 0 $course-header-bg, inset 0 -1px 5px 0 $shadow-l1;
     overflow: hidden;
-    margin-top: $header_image_margin;
-    padding: 0px;
+    padding: 0;
     width: flex-grid(12);
 
     .outer-wrapper {
+      @include clearfix();
       @extend .animation-home-header-pop-up;
-      margin: 0 auto;
-      padding: 240px 10px 0px;
       position: relative;
-      max-width: 1200px;
-      min-width: 760px;
-      @include clearfix;
+      margin: 0 auto;
+      padding: ($baseline*3);
+      max-width: ($baseline*60);
     }
 
     .title {
-      background: #FFF;
-      background: $course-header-bg;
-      border: 1px solid $border-color-3;
-      box-shadow: 0 4px 25px 0 rgba(0,0,0, 0.5);
+      @include span-columns(8);
+      @include shift(2);
       @include box-sizing(border-box);
-      min-height: 120px;
-      margin-left: grid-width(2) + $gw-gutter;
-      width: flex-grid(6);
-      float: left;
-      position: relative;
       @include transition(all 0.2s linear 0s);
+      position: relative;
+      box-shadow: 0 4px 5px 0 rgba(0, 0, 0, 0.5);
+      background: $white;
+      padding: ($baseline) ($baseline*1.5);
+      min-height: ($baseline*6);
       vertical-align: top;
 
+      // STATE: hover and focus
       &:hover, &:focus {
         .actions {
           display: none;
         }
       }
 
+      // 8 column layout
+      @include media($bp-medium) {
+        @include span-columns(6);
+        @include shift(1);
+      }
+
+      // 4 column layout
+      @include media($bp-small) {
+        @include fill-parent();
+        @include shift(0);
+      }
+
+      // 4 column layout
+      @include media($bp-tiny) {
+        @include fill-parent();
+        @include shift(0);
+      }
+
       > hgroup {
+        @include left(0);
         @include box-sizing(border-box);
-        display: inline-block;
-        left: 0px;
-        opacity: 1.0;
-        padding: 20px 30px;
-        top: 0px;
         @include transition(all 0.2s linear 0s);
-        text-align: left;
+        @include text-align(left);
+        display: inline-block;
+        top: 0;
+        opacity: 1.0;
+        padding-bottom: ($baseline);
 
         h1 {
-          margin-bottom: 0px;
-          text-align: left;
+          @include text-align(left);
+          margin-bottom: 0;
           text-shadow: 0 1px rgba(255,255,255, 0.6);
           text-transform: none;
         }
 
         h2 {
-          font-style: italic;
-          margin-bottom: 0px;
+          margin-bottom: 0;
           text-transform: lowercase;
+          font-style: italic;
+        }
+      }
+
+      .course-search {
+        padding: ($baseline) 0;
+
+        .search-input {
+          @include float(left);
+          @include padding-right($button-size);
+          @include padding-left($baseline*0.5);
+          @extend %ui-depth1;
+          @extend %t-title5;
+          border: 2px solid $gray-l3;
+          border-radius: 3px;
+          box-shadow: none;
+          width: 100%;
+          height: $course-search-input-height;
+          color: $black;
+          font-style: normal;
+          font-weight: normal;
+
+          // STATE: focus
+          &:focus {
+            @extend %no-outline;
+            border-color: $m-blue-d1;
+          }
+        }
+
+        .search-button {
+          @include right($baseline*1.5);
+          @include border-radius(1px, 3px, 3px, 1px);
+          @extend %ui-depth2;
+          @extend %t-icon3;
+          @extend %t-strong;
+          position: absolute;
+          border: 2px solid $m-blue-d1;
+          box-shadow: none;
+          background: $m-blue-d5;
+          padding: 0 ($baseline*0.7);
+          height: $course-search-input-height;
+          color: $white;
+          text-shadow: none;
+
+          // STATE: hover and focus
+          &:hover, &:focus {
+            background: $m-blue-l1;
+          }
         }
       }
     }
@@ -79,7 +146,7 @@
     }
 
     .media {
-      background: #FFF;
+      background: $white;
       background: $course-header-bg;
       border: 1px solid $border-color-3;
       border-left: 0;
@@ -107,20 +174,20 @@
         .play-intro {
           @include background-image(linear-gradient(-90deg, rgba(0,0,0, 0.65), rgba(0,0,0, 0.75)));
           border-radius: 4px;
-          box-shadow: 0 1px 12px 0 rgba(0,0,0, 0.4);
+          box-shadow: 0 1px 12px 0 $shadow-d1;
           @include box-sizing(border-box);
           border: 2px solid rgba(255,255,255, 0.8);
           height: 60px;
           left: 50%;
           margin-top: -30px;
-          margin-left: -30px;
+          margin-left: -($baseline*1.5);
           position: absolute;
           top: 50%;
           @include transition(all 0.15s linear 0s);
           width: 60px;
 
           &::after {
-            color: #fff;
+            color: $white;
             color: rgba(255,255,255, 0.8);
             content: "\25B6";
             display: block;
@@ -147,7 +214,7 @@
           border-color: rgba(255,255,255, 0.9);
 
           &::after {
-            color: #fff;
+            color: $white;
             color: rgba(255,255,255, 1);
           }
         }
@@ -157,7 +224,7 @@
 
   .highlighted-courses {
     @include box-sizing(border-box);
-    margin-bottom: 40px;
+    margin-bottom: ($baseline*2);
     position: relative;
     width: flex-grid(12);
     z-index: 1;
@@ -167,7 +234,7 @@
       border: 1px solid $border-color-2;
       border-radius: 4px;
       border-top-color: $border-color-1;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255, 0.4), 0 0px 12px 0 rgba(0,0,0, 0.2);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255, 0.4), 0 0px 12px 0 $shadow;
       color: $lighter-base-font-color;
       letter-spacing: 1px;
       margin-bottom: 0px;
@@ -202,7 +269,7 @@
     hr {
       @extend %faded-hr-divider-light;
       border: none;
-      margin: 0px;
+      margin: 0;
       position: relative;
       z-index: 2;
 
@@ -262,7 +329,7 @@
       }
 
       a {
-        @include transition(all 0.25s ease-in-out 0s);
+        @include transition(all $tmg-f2 ease-in-out 0s);
 
         &::before {
           @include background-image(radial-gradient(50% 50%, circle closest-side, rgba(255,255,255, 1) 0%, rgba(255,255,255, 0) 100%));
@@ -275,7 +342,7 @@
           opacity: 0;
           width: 200px;
           position: absolute;
-          @include transition(all 0.25s ease-in-out 0s);
+          @include transition(all $tmg-f2 ease-in-out 0s);
           top: 50%;
           z-index: 1;
         }
@@ -285,13 +352,13 @@
           left: 0px;
           position: absolute;
           text-align: center;
-          @include transition(all 0.25s ease-in-out 0s);
+          @include transition(all $tmg-f2 ease-in-out 0s);
           width: 100%;
           z-index: 2;
 
           > span {
             color: $base-font-color;
-            font: 800 italic 1.4em/1.4em $sans-serif;
+            font: 700 italic 1.4em/1.4em $sans-serif;
             text-shadow: 0 1px rgba(255,255,255, 0.6);
             @include transition(all 0.15s ease-in-out 0s);
 
@@ -303,7 +370,7 @@
 
         img {
           position: relative;
-          @include transition(all 0.25s ease-in-out 0s);
+          @include transition(all $tmg-f2 ease-in-out 0s);
           vertical-align: middle;
           z-index: 2;
         }
@@ -367,19 +434,19 @@
 
   .more-info {
     border: 1px solid $border-color-2;
-    margin-bottom: 80px;
+    margin-bottom: ($baseline*4);
     width: flex-grid(12);
 
     header {
       @include background-image(linear-gradient(-90deg, rgb(250,250,250), rgb(230,230,230)));
       border-bottom: 1px solid $border-color-2;
-      @include clearfix;
+      @include clearfix();
       padding: 10px 20px 8px;
       position: relative;
 
       h2 {
         float: left;
-        margin: 0px;
+        margin: 0;
         text-shadow: 0 1px rgba(255,255,255, 0.6);
       }
 
@@ -416,15 +483,15 @@
 
       .blog-posts {
         border-bottom: 1px solid $border-color-2;
-        margin-bottom: 20px;
-        padding-bottom: 20px;
-        @include clearfix;
+        margin-bottom: $baseline;
+        padding-bottom: $baseline;
+        @include clearfix();
 
         > article {
           border: 1px dotted transparent;
           border-color: $border-color-2;
           @include box-sizing(border-box);
-          @include clearfix;
+          @include clearfix();
           float: left;
           margin-right: flex-gutter();
           padding: 10px;
@@ -434,11 +501,11 @@
           &:hover, &:focus {
             background: $body-bg;
             border: 1px solid $border-color-2;
-            box-shadow: inset 0 0 3px 0 rgba(0,0,0, 0.1);
+            box-shadow: inset 0 0 3px 0 $shadow-l1;
           }
 
           &:last-child {
-            margin-right: 0px;
+            margin-right: 0;
           }
 
           .post-graphics {
@@ -494,7 +561,7 @@
           line-height: 1.6em;
           font-family: $serif;
           font-style: italic;
-          margin-left: 10px;
+          margin-left: ($baseline/2);
 
           &.read-more {
             float: right;

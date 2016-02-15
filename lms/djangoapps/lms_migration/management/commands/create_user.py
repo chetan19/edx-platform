@@ -6,7 +6,7 @@
 
 import os
 import sys
-import string       # pylint: disable=deprecated-module
+import string
 import datetime
 from getpass import getpass
 import json
@@ -44,7 +44,7 @@ class MyCompleter(object):  # Custom completer
 
 
 def GenPasswd(length=8, chars=string.letters + string.digits):
-    return ''.join([choice(chars) for i in range(length)])
+    return ''.join([choice(chars) for dummy0 in range(length)])
 
 #-----------------------------------------------------------------------------
 # main command

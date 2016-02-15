@@ -6,7 +6,6 @@ from contentstore.tests.utils import AjaxEnabledTestClient
 from contentstore.utils import delete_course_and_groups, reverse_url
 from courseware.tests.factories import UserFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
 
 from student.models import CourseEnrollment
 
@@ -21,12 +20,12 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
         """
         super(TestUsersDefaultRole, self).setUp()
         # create and log in a staff user.
-        self.user = UserFactory(is_staff=True)  # pylint: disable=no-member
+        self.user = UserFactory(is_staff=True)
         self.client = AjaxEnabledTestClient()
         self.client.login(username=self.user.username, password='test')
 
         # create a course via the view handler to create course
-        self.course_key = SlashSeparatedCourseKey('Org_1', 'Course_1', 'Run_1')
+        self.course_key = self.store.make_course_key('Org_1', 'Course_1', 'Run_1')
         self._create_course_with_given_location(self.course_key)
 
     def _create_course_with_given_location(self, course_key):
@@ -60,7 +59,7 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, self.course_key))
 
         # check that user has his default "Student" forum role for this course
-        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))  # pylint: disable=no-member
+        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))
 
         delete_course_and_groups(self.course_key, self.user.id)
 
@@ -68,7 +67,7 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, self.course_key))
 
         # check that user has forum role for this course even after deleting it
-        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))  # pylint: disable=no-member
+        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))
 
     def test_user_role_on_course_recreate(self):
         """
@@ -77,7 +76,7 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
         """
         # check that user has enrollment and his default "Student" forum role for this course
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, self.course_key))
-        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))  # pylint: disable=no-member
+        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))
 
         # delete this course and recreate this course with same user
         delete_course_and_groups(self.course_key, self.user.id)
@@ -88,7 +87,7 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
         self.assertTrue(CourseEnrollment.is_enrolled(self.user, self.course_key))
 
         # check that user has his default "Student" forum role for this course
-        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))  # pylint: disable=no-member
+        self.assertTrue(self.user.roles.filter(name="Student", course_id=self.course_key))
 
     def test_user_role_on_course_recreate_with_change_name_case(self):
         """
@@ -107,10 +106,10 @@ class TestUsersDefaultRole(ModuleStoreTestCase):
 
         # check that user has his default "Student" forum role again for this course (with changed name case)
         self.assertTrue(
-            self.user.roles.filter(name="Student", course_id=new_course_key)  # pylint: disable=no-member
+            self.user.roles.filter(name="Student", course_id=new_course_key)
         )
 
         # Disabled due to case-sensitive test db (sqlite3)
         # # check that there user has only one "Student" forum role (with new updated course_id)
-        # self.assertEqual(self.user.roles.filter(name='Student').count(), 1)  # pylint: disable=no-member
+        # self.assertEqual(self.user.roles.filter(name='Student').count(), 1)
         # self.assertEqual(self.user.roles.filter(name='Student')[0].course_id, new_course_location.course_key)

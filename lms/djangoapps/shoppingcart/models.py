@@ -1,15 +1,19 @@
+# pylint: disable=arguments-differ
 """ Models for the shopping cart and assorted purchase types """
 
 from collections import namedtuple
 from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
+import json
 import analytics
+from io import BytesIO
+from django.db.models import Q, F
 import pytz
 import logging
 import smtplib
 import StringIO
 import csv
-from courseware.courses import get_course_by_id
 from boto.exception import BotoServerError  # this is a super-class of SESError and catches connection errors
 from django.dispatch import receiver
 from django.db import models
@@ -17,26 +21,25 @@ from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.mail import send_mail
 from django.contrib.auth.models import User
-from django.utils.translation import ugettext as _
+from django.utils.translation import ugettext as _, ugettext_lazy
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Count
+from django.db.models.signals import post_save, post_delete
+
 from django.core.urlresolvers import reverse
 from model_utils.managers import InheritanceManager
 from model_utils.models import TimeStampedModel
 from django.core.mail.message import EmailMessage
-
 from xmodule.modulestore.django import modulestore
+from eventtracking import tracker
 
+from courseware.courses import get_course_by_id
 from config_models.models import ConfigurationModel
 from course_modes.models import CourseMode
 from edxmako.shortcuts import render_to_string
 from student.models import CourseEnrollment, UNENROLL_DONE
-from eventtracking import tracker
 from util.query import use_read_replica_if_available
 from xmodule_django.models import CourseKeyField
-
-from verify_student.models import SoftwareSecurePhotoVerification
-
 from .exceptions import (
     InvalidCartItem,
     PurchasedCallbackException,
@@ -44,14 +47,13 @@ from .exceptions import (
     AlreadyEnrolledInCourseException,
     CourseDoesNotExistException,
     MultipleCouponsNotAllowedException,
-    RegCodeAlreadyExistException,
-    ItemDoesNotExistAgainstRegCodeException,
-    ItemNotAllowedToRedeemRegCodeException,
     InvalidStatusToRetire,
     UnexpectedOrderItemStatus,
+    ItemNotFoundInCartException
 )
-
 from microsite_configuration import microsite
+from shoppingcart.pdf import PDFInvoice
+
 
 log = logging.getLogger("shoppingcart")
 
@@ -86,7 +88,7 @@ ORDER_STATUS_MAP = {
 }
 
 # we need a tuple to represent the primary key of various OrderItem subclasses
-OrderItemSubclassPK = namedtuple('OrderItemSubclassPK', ['cls', 'pk'])  # pylint: disable=invalid-name
+OrderItemSubclassPK = namedtuple('OrderItemSubclassPK', ['cls', 'pk'])
 
 
 class OrderTypes(object):
@@ -108,6 +110,9 @@ class Order(models.Model):
     as the shopping cart.
     FOR ANY USER, THERE SHOULD ONLY EVER BE ZERO OR ONE ORDER WITH STATUS='cart'.
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     user = models.ForeignKey(User, db_index=True)
     currency = models.CharField(default="usd", max_length=8)  # lower case ISO currency codes
     status = models.CharField(max_length=32, default='cart', choices=ORDER_STATUSES)
@@ -181,13 +186,16 @@ class Order(models.Model):
         return False
 
     @classmethod
-    def remove_cart_item_from_order(cls, item):
+    def remove_cart_item_from_order(cls, item, user):
         """
         Removes the item from the cart if the item.order.status == 'cart'.
+        Also removes any code redemption associated with the order_item
         """
         if item.order.status == 'cart':
-            log.info("Item {0} removed from the user cart".format(item.id))
+            log.info("order item %s removed for user %s", str(item.id), user)
             item.delete()
+            # remove any redemption entry associated with the item
+            CouponRedemption.remove_code_redemption_from_item(item, user)
 
     @property
     def total_cost(self):
@@ -195,7 +203,7 @@ class Order(models.Model):
         Return the total cost of the cart.  If the order has been purchased, returns total of
         all purchased and not refunded items.
         """
-        return sum(i.line_cost for i in self.orderitem_set.filter(status=self.status))  # pylint: disable=no-member
+        return sum(i.line_cost for i in self.orderitem_set.filter(status=self.status))
 
     def has_items(self, item_type=None):
         """
@@ -203,9 +211,9 @@ class Order(models.Model):
         If an item_type is passed in then we check to see if there are any items of that class type
         """
         if not item_type:
-            return self.orderitem_set.exists()  # pylint: disable=no-member
+            return self.orderitem_set.exists()
         else:
-            items = self.orderitem_set.all().select_subclasses()  # pylint: disable=no-member
+            items = self.orderitem_set.all().select_subclasses()
             for item in items:
                 if isinstance(item, item_type):
                     return True
@@ -215,19 +223,18 @@ class Order(models.Model):
         """
         Reset the items price state in the user cart
         """
-        for item in self.orderitem_set.all():  # pylint: disable=no-member
-            if item.list_price:
+        for item in self.orderitem_set.all():
+            if item.is_discounted:
                 item.unit_cost = item.list_price
-                item.list_price = None
                 item.save()
 
     def clear(self):
         """
         Clear out all the items in the cart
         """
-        self.orderitem_set.all().delete()  # pylint: disable=no-member
+        self.orderitem_set.all().delete()
 
-    @transaction.commit_on_success
+    @transaction.atomic
     def start_purchase(self):
         """
         Start the purchase process.  This will set the order status to "paying",
@@ -253,7 +260,7 @@ class Order(models.Model):
         The UI/UX may change in the future to make the switching between PaidCourseRegistration
         and CourseRegCodeItems a more explicit UI gesture from the purchaser
         """
-        cart_items = self.orderitem_set.all()  # pylint: disable=no-member
+        cart_items = self.orderitem_set.all()
         is_order_type_business = False
         for cart_item in cart_items:
             if cart_item.qty > 1:
@@ -289,6 +296,34 @@ class Order(models.Model):
         self.save()
         return old_to_new_id_map
 
+    def generate_pdf_receipt(self, order_items):
+        """
+        Generates the pdf receipt for the given order_items
+        and returns the pdf_buffer.
+        """
+        items_data = []
+        for item in order_items:
+            item_total = item.qty * item.unit_cost
+            items_data.append({
+                'item_description': item.pdf_receipt_display_name,
+                'quantity': item.qty,
+                'list_price': item.get_list_price(),
+                'discount': item.get_list_price() - item.unit_cost,
+                'item_total': item_total
+            })
+        pdf_buffer = BytesIO()
+
+        PDFInvoice(
+            items_data=items_data,
+            item_id=str(self.id),
+            date=self.purchase_time,
+            is_invoice=False,
+            total_cost=self.total_cost,
+            payment_received=self.total_cost,
+            balance=0
+        ).generate_pdf(pdf_buffer)
+        return pdf_buffer
+
     def generate_registration_codes_csv(self, orderitems, site_name):
         """
         this function generates the csv file
@@ -299,7 +334,7 @@ class Order(models.Model):
         csv_writer.writerow(['Course Name', 'Registration Code', 'URL'])
         for item in orderitems:
             course_id = item.course_id
-            course = get_course_by_id(getattr(item, 'course_id'), depth=0)
+            course = get_course_by_id(item.course_id, depth=0)
             registration_codes = CourseRegistrationCode.objects.filter(course_id=course_id, order=self)
             course_info.append((course.display_name, ' (' + course.start_datetime_text() + '-' + course.end_datetime_text() + ')'))
             for registration_code in registration_codes:
@@ -309,11 +344,11 @@ class Order(models.Model):
 
         return csv_file, course_info
 
-    def send_confirmation_emails(self, orderitems, is_order_type_business, csv_file, site_name, courses_info):
+    def send_confirmation_emails(self, orderitems, is_order_type_business, csv_file, pdf_file, site_name, courses_info):
         """
         send confirmation e-mail
         """
-        recipient_list = [(self.user.username, getattr(self.user, 'email'), 'user')]  # pylint: disable=no-member
+        recipient_list = [(self.user.username, self.user.email, 'user')]  # pylint: disable=no-member
         if self.company_contact_email:
             recipient_list.append((self.company_contact_name, self.company_contact_email, 'company_contact'))
         joined_course_names = ""
@@ -351,7 +386,9 @@ class Order(models.Model):
                         'course_names': ", ".join([course_info[0] for course_info in courses_info]),
                         'dashboard_url': dashboard_url,
                         'currency_symbol': settings.PAID_COURSE_REGISTRATION_CURRENCY[1],
-                        'order_placed_by': '{username} ({email})'.format(username=self.user.username, email=getattr(self.user, 'email')),  # pylint: disable=no-member
+                        'order_placed_by': '{username} ({email})'.format(
+                            username=self.user.username, email=self.user.email
+                        ),
                         'has_billing_info': settings.FEATURES['STORE_BILLING_INFO'],
                         'platform_name': microsite.get_value('platform_name', settings.PLATFORM_NAME),
                         'payment_support_email': microsite.get_value('payment_support_email', settings.PAYMENT_SUPPORT_EMAIL),
@@ -371,9 +408,14 @@ class Order(models.Model):
 
                 if csv_file:
                     email.attach(u'RegistrationCodesRedemptionUrls.csv', csv_file.getvalue(), 'text/csv')
+                if pdf_file is not None:
+                    email.attach(u'Receipt.pdf', pdf_file.getvalue(), 'application/pdf')
+                else:
+                    file_buffer = StringIO.StringIO(_('pdf download unavailable right now, please contact support.'))
+                    email.attach(u'pdf_not_available.txt', file_buffer.getvalue(), 'text/plain')
                 email.send()
         except (smtplib.SMTPException, BotoServerError):  # sadly need to handle diff. mail backends individually
-            log.error('Failed sending confirmation e-mail for order %d', self.id)  # pylint: disable=no-member
+            log.error('Failed sending confirmation e-mail for order %d', self.id)
 
     def purchase(self, first='', last='', street1='', street2='', city='', state='', postalcode='',
                  country='', ccnum='', cardtype='', processor_reply_dump=''):
@@ -437,25 +479,51 @@ class Order(models.Model):
             #
             csv_file, courses_info = self.generate_registration_codes_csv(orderitems, site_name)
 
-        self.send_confirmation_emails(orderitems, self.order_type == OrderTypes.BUSINESS, csv_file, site_name, courses_info)
-        self._emit_purchase_event(orderitems)
+        try:
+            pdf_file = self.generate_pdf_receipt(orderitems)
+        except Exception:  # pylint: disable=broad-except
+            log.exception('Exception at creating pdf file.')
+            pdf_file = None
 
-    def _emit_purchase_event(self, orderitems):
+        try:
+            self.send_confirmation_emails(
+                orderitems, self.order_type == OrderTypes.BUSINESS,
+                csv_file, pdf_file, site_name, courses_info
+            )
+        except Exception:  # pylint: disable=broad-except
+            # Catch all exceptions here, since the Django view implicitly
+            # wraps this in a transaction.  If the order completes successfully,
+            # we don't want to roll back just because we couldn't send
+            # the confirmation email.
+            log.exception('Error occurred while sending payment confirmation email')
+
+        self._emit_order_event('Completed Order', orderitems)
+
+    def refund(self):
         """
-        Emit an analytics purchase event for this Order. Will iterate over all associated
+        Refund the given order. As of right now, this just marks the order as refunded.
+        """
+        self.status = 'refunded'
+        self.save()
+        orderitems = OrderItem.objects.filter(order=self).select_subclasses()
+        self._emit_order_event('Refunded Order', orderitems)
+
+    def _emit_order_event(self, event_name, orderitems):
+        """
+        Emit an analytics event with the given name for this Order. Will iterate over all associated
         OrderItems and add them as products in the event as well.
 
         """
-        event_name = 'Completed Order'  # Required event name by Segment
         try:
-            if settings.FEATURES.get('SEGMENT_IO_LMS') and settings.SEGMENT_IO_LMS_KEY:
+            if settings.LMS_SEGMENT_KEY:
                 tracking_context = tracker.get_tracker().resolve_context()
-                analytics.track(self.user.id, event_name, {  # pylint: disable=no-member
-                    'orderId': self.id,  # pylint: disable=no-member
+                analytics.track(self.user.id, event_name, {
+                    'orderId': self.id,
                     'total': str(self.total_cost),
                     'currency': self.currency,
                     'products': [item.analytics_data() for item in orderitems]
                 }, context={
+                    'ip': tracking_context.get('ip'),
                     'Google Analytics': {
                         'clientId': tracking_context.get('client_id')
                     }
@@ -467,7 +535,7 @@ class Order(models.Model):
             # errors in the logs.
             log.exception(
                 u'Unable to emit {event} event for user {user} and order {order}'.format(
-                    event=event_name, user=self.user.id, order=self.id)  # pylint: disable=no-member
+                    event=event_name, user=self.user.id, order=self.id)
             )
 
     def add_billing_details(self, company_name='', company_contact_name='', company_contact_email='', recipient_name='',
@@ -532,7 +600,7 @@ class Order(models.Model):
                 )
             )
 
-        for item in self.orderitem_set.all():  # pylint: disable=no-member
+        for item in self.orderitem_set.all():
             if item.status != self.status:
                 raise UnexpectedOrderItemStatus(
                     "order_item status is different from order status"
@@ -541,8 +609,25 @@ class Order(models.Model):
         self.status = ORDER_STATUS_MAP[self.status]
         self.save()
 
-        for item in self.orderitem_set.all():  # pylint: disable=no-member
+        for item in self.orderitem_set.all():
             item.retire()
+
+    def find_item_by_course_id(self, course_id):
+        """
+        course_id: Course id of the item to find
+        Returns OrderItem from the Order given a course_id
+        Raises exception ItemNotFoundException when the item
+        having the given course_id is not present in the cart
+        """
+        cart_items = OrderItem.objects.filter(order=self).select_subclasses()
+        found_items = []
+        for item in cart_items:
+            if getattr(item, 'course_id', None):
+                if item.course_id == course_id:
+                    found_items.append(item)
+        if not found_items:
+            raise ItemNotFoundInCartException
+        return found_items
 
 
 class OrderItem(TimeStampedModel):
@@ -553,6 +638,9 @@ class OrderItem(TimeStampedModel):
     Each implementation of OrderItem should provide its own purchased_callback as
     a method.
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     objects = InheritanceManager()
     order = models.ForeignKey(Order, db_index=True)
     # this is denormalized, but convenient for SQL queries for reports, etc. user should always be = order.user
@@ -590,7 +678,7 @@ class OrderItem(TimeStampedModel):
         if order.currency != currency and order.orderitem_set.exists():
             raise InvalidCartItem(_("Trying to add a different currency into the cart"))
 
-    @transaction.commit_on_success
+    @transaction.atomic
     def purchase_item(self):
         """
         This is basically a wrapper around purchased_callback that handles
@@ -633,6 +721,23 @@ class OrderItem(TimeStampedModel):
         return OrderItemSubclassPK(type(self), self.pk)
 
     @property
+    def is_discounted(self):
+        """
+        Returns True if the item a discount coupon has been applied to the OrderItem and False otherwise.
+        Earlier, the OrderItems were stored with an empty list_price if a discount had not been applied.
+        Now we consider the item to be non discounted if list_price is None or list_price == unit_cost. In
+        these lines, an item is discounted if it's non-None and list_price and unit_cost mismatch.
+        This should work with both new and old records.
+        """
+        return self.list_price and self.list_price != self.unit_cost
+
+    def get_list_price(self):
+        """
+        Returns the unit_cost if no discount has been applied, or the list_price if it is defined.
+        """
+        return self.list_price if self.list_price else self.unit_cost
+
+    @property
     def single_item_receipt_template(self):
         """
         The template that should be used when there's only one item in the order
@@ -647,14 +752,29 @@ class OrderItem(TimeStampedModel):
         """
         return {}
 
-    @property
-    def additional_instruction_text(self):
+    def additional_instruction_text(self, **kwargs):  # pylint: disable=unused-argument
         """
         Individual instructions for this order item.
 
         Currently, only used for emails.
         """
         return ''
+
+    @property
+    def pdf_receipt_display_name(self):
+        """
+            How to display this item on a PDF printed receipt file.
+            This can be overridden by the subclasses of OrderItem
+        """
+        course_key = getattr(self, 'course_id', None)
+        if course_key:
+            course = get_course_by_id(course_key, depth=0)
+            return course.display_name
+        else:
+            raise Exception(
+                "Not Implemented. OrderItems that are not Course specific should have"
+                " a overridden pdf_receipt_display_name property"
+            )
 
     def analytics_data(self):
         """Simple function used to construct analytics data for the OrderItem.
@@ -668,7 +788,7 @@ class OrderItem(TimeStampedModel):
 
         """
         return {
-            'id': self.id,  # pylint: disable=no-member
+            'id': self.id,
             'sku': type(self).__name__,
             'name': 'N/A',
             'price': str(self.unit_cost),
@@ -686,29 +806,405 @@ class OrderItem(TimeStampedModel):
         self.save()
 
 
-class Invoice(models.Model):
+class Invoice(TimeStampedModel):
     """
-         This table capture all the information needed to support "invoicing"
-         which is when a user wants to purchase Registration Codes,
-         but will not do so via a Credit Card transaction.
+    This table capture all the information needed to support "invoicing"
+    which is when a user wants to purchase Registration Codes,
+    but will not do so via a Credit Card transaction.
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     company_name = models.CharField(max_length=255, db_index=True)
     company_contact_name = models.CharField(max_length=255)
     company_contact_email = models.CharField(max_length=255)
     recipient_name = models.CharField(max_length=255)
     recipient_email = models.CharField(max_length=255)
     address_line_1 = models.CharField(max_length=255)
-    address_line_2 = models.CharField(max_length=255, null=True)
-    address_line_3 = models.CharField(max_length=255, null=True)
+    address_line_2 = models.CharField(max_length=255, null=True, blank=True)
+    address_line_3 = models.CharField(max_length=255, null=True, blank=True)
     city = models.CharField(max_length=255, null=True)
     state = models.CharField(max_length=255, null=True)
     zip = models.CharField(max_length=15, null=True)
     country = models.CharField(max_length=64, null=True)
-    course_id = CourseKeyField(max_length=255, db_index=True)
+
+    # This field has been deprecated.
+    # The total amount can now be calculated as the sum
+    # of each invoice item associated with the invoice.
+    # For backwards compatibility, this field is maintained
+    # and written to during invoice creation.
     total_amount = models.FloatField()
-    internal_reference = models.CharField(max_length=255, null=True)
-    customer_reference_number = models.CharField(max_length=63, null=True)
+
+    # This field has been deprecated in order to support
+    # invoices for items that are not course-related.
+    # Although this field is still maintained for backwards
+    # compatibility, you should use CourseRegistrationCodeInvoiceItem
+    # to look up the course ID for purchased redeem codes.
+    course_id = CourseKeyField(max_length=255, db_index=True)
+
+    internal_reference = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text=ugettext_lazy("Internal reference code for this invoice.")
+    )
+    customer_reference_number = models.CharField(
+        max_length=63,
+        null=True,
+        blank=True,
+        help_text=ugettext_lazy("Customer's reference code for this invoice.")
+    )
     is_valid = models.BooleanField(default=True)
+
+    @classmethod
+    def get_invoice_total_amount_for_course(cls, course_key):
+        """
+        returns the invoice total amount generated by course.
+        """
+        result = cls.objects.filter(course_id=course_key, is_valid=True).aggregate(total=Sum('total_amount'))
+
+        total = result.get('total', 0)
+        return total if total else 0
+
+    def generate_pdf_invoice(self, course, course_price, quantity, sale_price):
+        """
+        Generates the pdf invoice for the given course
+        and returns the pdf_buffer.
+        """
+        discount_per_item = float(course_price) - sale_price / quantity
+        list_price = course_price - discount_per_item
+        items_data = [{
+            'item_description': course.display_name,
+            'quantity': quantity,
+            'list_price': list_price,
+            'discount': discount_per_item,
+            'item_total': quantity * list_price
+        }]
+        pdf_buffer = BytesIO()
+        PDFInvoice(
+            items_data=items_data,
+            item_id=str(self.id),
+            date=datetime.now(pytz.utc),
+            is_invoice=True,
+            total_cost=float(self.total_amount),
+            payment_received=0,
+            balance=float(self.total_amount)
+        ).generate_pdf(pdf_buffer)
+
+        return pdf_buffer
+
+    def snapshot(self):
+        """Create a snapshot of the invoice.
+
+        A snapshot is a JSON-serializable representation
+        of the invoice's state, including its line items
+        and associated transactions (payments/refunds).
+
+        This is useful for saving the history of changes
+        to the invoice.
+
+        Returns:
+            dict
+
+        """
+        return {
+            'internal_reference': self.internal_reference,
+            'customer_reference': self.customer_reference_number,
+            'is_valid': self.is_valid,
+            'contact_info': {
+                'company_name': self.company_name,
+                'company_contact_name': self.company_contact_name,
+                'company_contact_email': self.company_contact_email,
+                'recipient_name': self.recipient_name,
+                'recipient_email': self.recipient_email,
+                'address_line_1': self.address_line_1,
+                'address_line_2': self.address_line_2,
+                'address_line_3': self.address_line_3,
+                'city': self.city,
+                'state': self.state,
+                'zip': self.zip,
+                'country': self.country,
+            },
+            'items': [
+                item.snapshot()
+                for item in InvoiceItem.objects.filter(invoice=self).select_subclasses()
+            ],
+            'transactions': [
+                trans.snapshot()
+                for trans in InvoiceTransaction.objects.filter(invoice=self)
+            ],
+        }
+
+    def __unicode__(self):
+        label = (
+            unicode(self.internal_reference)
+            if self.internal_reference
+            else u"No label"
+        )
+
+        created = (
+            self.created.strftime("%Y-%m-%d")
+            if self.created
+            else u"No date"
+        )
+
+        return u"{label} ({date_created})".format(
+            label=label, date_created=created
+        )
+
+
+INVOICE_TRANSACTION_STATUSES = (
+    # A payment/refund is in process, but money has not yet been transferred
+    ('started', 'started'),
+
+    # A payment/refund has completed successfully
+    # This should be set ONLY once money has been successfully exchanged.
+    ('completed', 'completed'),
+
+    # A payment/refund was promised, but was cancelled before
+    # money had been transferred.  An example would be
+    # cancelling a refund check before the recipient has
+    # a chance to deposit it.
+    ('cancelled', 'cancelled')
+)
+
+
+class InvoiceTransaction(TimeStampedModel):
+    """Record payment and refund information for invoices.
+
+    There are two expected use cases:
+
+    1) We send an invoice to someone, and they send us a check.
+       We then manually create an invoice transaction to represent
+       the payment.
+
+    2) We send an invoice to someone, and they pay us.  Later, we
+       need to issue a refund for the payment.  We manually
+       create a transaction with a negative amount to represent
+       the refund.
+
+    """
+    class Meta(object):
+        app_label = "shoppingcart"
+
+    invoice = models.ForeignKey(Invoice)
+    amount = models.DecimalField(
+        default=0.0, decimal_places=2, max_digits=30,
+        help_text=ugettext_lazy(
+            "The amount of the transaction.  Use positive amounts for payments"
+            " and negative amounts for refunds."
+        )
+    )
+    currency = models.CharField(
+        default="usd",
+        max_length=8,
+        help_text=ugettext_lazy("Lower-case ISO currency codes")
+    )
+    comments = models.TextField(
+        null=True,
+        blank=True,
+        help_text=ugettext_lazy("Optional: provide additional information for this transaction")
+    )
+    status = models.CharField(
+        max_length=32,
+        default='started',
+        choices=INVOICE_TRANSACTION_STATUSES,
+        help_text=ugettext_lazy(
+            "The status of the payment or refund. "
+            "'started' means that payment is expected, but money has not yet been transferred. "
+            "'completed' means that the payment or refund was received. "
+            "'cancelled' means that payment or refund was expected, but was cancelled before money was transferred. "
+        )
+    )
+    created_by = models.ForeignKey(User)
+    last_modified_by = models.ForeignKey(User, related_name='last_modified_by_user')
+
+    @classmethod
+    def get_invoice_transaction(cls, invoice_id):
+        """
+        if found Returns the Invoice Transaction object for the given invoice_id
+        else returns None
+        """
+        try:
+            return cls.objects.get(Q(invoice_id=invoice_id), Q(status='completed') | Q(status='refunded'))
+        except InvoiceTransaction.DoesNotExist:
+            return None
+
+    @classmethod
+    def get_total_amount_of_paid_course_invoices(cls, course_key):
+        """
+        returns the total amount of the paid invoices.
+        """
+        result = cls.objects.filter(amount__gt=0, invoice__course_id=course_key, status='completed').aggregate(
+            total=Sum(
+                'amount',
+                output_field=models.DecimalField(decimal_places=2, max_digits=30)
+            )
+        )
+
+        total = result.get('total', 0)
+        return total if total else 0
+
+    def snapshot(self):
+        """Create a snapshot of the invoice transaction.
+
+        The returned dictionary is JSON-serializable.
+
+        Returns:
+            dict
+
+        """
+        return {
+            'amount': unicode(self.amount),
+            'currency': self.currency,
+            'comments': self.comments,
+            'status': self.status,
+            'created_by': self.created_by.username,
+            'last_modified_by': self.last_modified_by.username
+        }
+
+
+class InvoiceItem(TimeStampedModel):
+    """
+    This is the basic interface for invoice items.
+
+    Each invoice item represents a "line" in the invoice.
+    For example, in an invoice for course registration codes,
+    there might be an invoice item representing 10 registration
+    codes for the DemoX course.
+
+    """
+    class Meta(object):
+        app_label = "shoppingcart"
+
+    objects = InheritanceManager()
+    invoice = models.ForeignKey(Invoice, db_index=True)
+    qty = models.IntegerField(
+        default=1,
+        help_text=ugettext_lazy("The number of items sold.")
+    )
+    unit_price = models.DecimalField(
+        default=0.0,
+        decimal_places=2,
+        max_digits=30,
+        help_text=ugettext_lazy("The price per item sold, including discounts.")
+    )
+    currency = models.CharField(
+        default="usd",
+        max_length=8,
+        help_text=ugettext_lazy("Lower-case ISO currency codes")
+    )
+
+    def snapshot(self):
+        """Create a snapshot of the invoice item.
+
+        The returned dictionary is JSON-serializable.
+
+        Returns:
+            dict
+
+        """
+        return {
+            'qty': self.qty,
+            'unit_price': unicode(self.unit_price),
+            'currency': self.currency
+        }
+
+
+class CourseRegistrationCodeInvoiceItem(InvoiceItem):
+    """
+    This is an invoice item that represents a payment for
+    a course registration.
+
+    """
+    class Meta(object):
+        app_label = "shoppingcart"
+
+    course_id = CourseKeyField(max_length=128, db_index=True)
+
+    def snapshot(self):
+        """Create a snapshot of the invoice item.
+
+        This is the same as a snapshot for other invoice items,
+        with the addition of a `course_id` field.
+
+        Returns:
+            dict
+
+        """
+        snapshot = super(CourseRegistrationCodeInvoiceItem, self).snapshot()
+        snapshot['course_id'] = unicode(self.course_id)
+        return snapshot
+
+
+class InvoiceHistory(models.Model):
+    """History of changes to invoices.
+
+    This table stores snapshots of invoice state,
+    including the associated line items and transactions
+    (payments/refunds).
+
+    Entries in the table are created, but never deleted
+    or modified.
+
+    We use Django signals to save history entries on change
+    events.  These signals are fired within a database
+    transaction, so the history record is created only
+    if the invoice change is successfully persisted.
+
+    """
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    invoice = models.ForeignKey(Invoice)
+
+    # JSON-serialized representation of the current state
+    # of the invoice, including its line items and
+    # transactions (payments/refunds).
+    snapshot = models.TextField(blank=True)
+
+    @classmethod
+    def save_invoice_snapshot(cls, invoice):
+        """Save a snapshot of the invoice's current state.
+
+        Arguments:
+            invoice (Invoice): The invoice to save.
+
+        """
+        cls.objects.create(
+            invoice=invoice,
+            snapshot=json.dumps(invoice.snapshot())
+        )
+
+    @staticmethod
+    def snapshot_receiver(sender, instance, **kwargs):  # pylint: disable=unused-argument
+        """Signal receiver that saves a snapshot of an invoice.
+
+        Arguments:
+            sender: Not used, but required by Django signals.
+            instance (Invoice, InvoiceItem, or InvoiceTransaction)
+
+        """
+        if isinstance(instance, Invoice):
+            InvoiceHistory.save_invoice_snapshot(instance)
+        elif hasattr(instance, 'invoice'):
+            InvoiceHistory.save_invoice_snapshot(instance.invoice)
+
+    class Meta(object):
+        get_latest_by = "timestamp"
+        app_label = "shoppingcart"
+
+
+# Hook up Django signals to record changes in the history table.
+# We record any change to an invoice, invoice item, or transaction.
+# We also record any deletion of a transaction, since users can delete
+# transactions via Django admin.
+# Note that we need to include *each* InvoiceItem subclass
+# here, since Django signals do not fire automatically for subclasses
+# of the "sender" class.
+post_save.connect(InvoiceHistory.snapshot_receiver, sender=Invoice)
+post_save.connect(InvoiceHistory.snapshot_receiver, sender=InvoiceItem)
+post_save.connect(InvoiceHistory.snapshot_receiver, sender=CourseRegistrationCodeInvoiceItem)
+post_save.connect(InvoiceHistory.snapshot_receiver, sender=InvoiceTransaction)
+post_delete.connect(InvoiceHistory.snapshot_receiver, sender=InvoiceTransaction)
 
 
 class CourseRegistrationCode(models.Model):
@@ -716,109 +1212,112 @@ class CourseRegistrationCode(models.Model):
     This table contains registration codes
     With registration code, a user can register for a course for free
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     code = models.CharField(max_length=32, db_index=True, unique=True)
     course_id = CourseKeyField(max_length=255, db_index=True)
     created_by = models.ForeignKey(User, related_name='created_by_user')
-    created_at = models.DateTimeField(default=datetime.now(pytz.utc))
+    created_at = models.DateTimeField(auto_now_add=True)
     order = models.ForeignKey(Order, db_index=True, null=True, related_name="purchase_order")
+    mode_slug = models.CharField(max_length=100, null=True)
+    is_valid = models.BooleanField(default=True)
+
+    # For backwards compatibility, we maintain the FK to "invoice"
+    # In the future, we will remove this in favor of the FK
+    # to "invoice_item" (which can be used to look up the invoice).
     invoice = models.ForeignKey(Invoice, null=True)
+    invoice_item = models.ForeignKey(CourseRegistrationCodeInvoiceItem, null=True)
 
     @classmethod
-    @transaction.commit_on_success
-    def free_user_enrollment(cls, cart):
+    def order_generated_registration_codes(cls, course_id):
         """
-        Here we enroll the user free for all courses available in shopping cart
+        Returns the registration codes that were generated
+        via bulk purchase scenario.
         """
-        cart_items = cart.orderitem_set.all().select_subclasses()
-        if cart_items:
-            for item in cart_items:
-                CourseEnrollment.enroll(cart.user, item.course_id)
-                log.info("Enrolled '{0}' in free course '{1}'"
-                         .format(cart.user.email, item.course_id))  # pylint: disable=no-member
-                item.status = 'purchased'
-                item.save()
+        return cls.objects.filter(order__isnull=False, course_id=course_id)
 
-            cart.status = 'purchased'
-            cart.purchase_time = datetime.now(pytz.utc)
-            cart.save()
+    @classmethod
+    def invoice_generated_registration_codes(cls, course_id):
+        """
+        Returns the registration codes that were generated
+        via invoice.
+        """
+        return cls.objects.filter(invoice__isnull=False, course_id=course_id)
 
 
 class RegistrationCodeRedemption(models.Model):
     """
     This model contains the registration-code redemption info
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     order = models.ForeignKey(Order, db_index=True, null=True)
     registration_code = models.ForeignKey(CourseRegistrationCode, db_index=True)
     redeemed_by = models.ForeignKey(User, db_index=True)
-    redeemed_at = models.DateTimeField(default=datetime.now(pytz.utc), null=True)
+    redeemed_at = models.DateTimeField(auto_now_add=True, null=True)
+    course_enrollment = models.ForeignKey(CourseEnrollment, null=True)
 
     @classmethod
-    def delete_registration_redemption(cls, user, cart):
+    def registration_code_used_for_enrollment(cls, course_enrollment):
         """
-        This method delete registration redemption
+        Returns RegistrationCodeRedemption object if registration code
+        has been used during the course enrollment else Returns None.
         """
-        reg_code_redemption = cls.objects.filter(redeemed_by=user, order=cart)
-        if reg_code_redemption:
-            reg_code_redemption.delete()
-            log.info('Registration code redemption entry removed for user {0} for order {1}'.format(user, cart.id))
+        # theoretically there could be more than one (e.g. someone self-unenrolls
+        # then re-enrolls with a different regcode)
+        reg_codes = cls.objects.filter(course_enrollment=course_enrollment).order_by('-redeemed_at')
+        if reg_codes:
+            # return the first one. In all normal use cases of registration codes
+            # the user will only have one
+            return reg_codes[0]
+
+        return None
 
     @classmethod
-    def add_reg_code_redemption(cls, course_reg_code, order):
+    def is_registration_code_redeemed(cls, course_reg_code):
         """
-        add course registration code info into RegistrationCodeRedemption model
+        Checks the existence of the registration code
+        in the RegistrationCodeRedemption
         """
-        cart_items = order.orderitem_set.all().select_subclasses()
-
-        for item in cart_items:
-            if getattr(item, 'course_id'):
-                if item.course_id == course_reg_code.course_id:
-                    # If the item qty is greater than 1 then the registration code should not be allowed to
-                    # redeem
-                    if item.qty > 1:
-                        raise ItemNotAllowedToRedeemRegCodeException
-                    # If another account tries to use a existing registration code before the student checks out, an
-                    # error message will appear.The reg code is un-reusable.
-                    code_redemption = cls.objects.filter(registration_code=course_reg_code)
-                    if code_redemption:
-                        log.exception("Registration code '{0}' already used".format(course_reg_code.code))
-                        raise RegCodeAlreadyExistException
-
-                    code_redemption = RegistrationCodeRedemption(registration_code=course_reg_code, order=order, redeemed_by=order.user)
-                    code_redemption.save()
-                    item.list_price = item.unit_cost
-                    item.unit_cost = 0
-                    item.save()
-                    log.info("Code '{0}' is used by user {1} against order id '{2}' "
-                             .format(course_reg_code.code, order.user.username, order.id))
-                    return course_reg_code
-
-        log.warning("Course item does not exist against registration code '{0}'".format(course_reg_code.code))
-        raise ItemDoesNotExistAgainstRegCodeException
+        return cls.objects.filter(registration_code__code=course_reg_code).exists()
 
     @classmethod
-    def create_invoice_generated_registration_redemption(cls, course_reg_code, user):
+    def get_registration_code_redemption(cls, code, course_id):
+        """
+        Returns the registration code redemption object if found else returns None.
+        """
+        try:
+            code_redemption = cls.objects.get(registration_code__code=code, registration_code__course_id=course_id)
+        except cls.DoesNotExist:
+            code_redemption = None
+        return code_redemption
+
+    @classmethod
+    def create_invoice_generated_registration_redemption(cls, course_reg_code, user):  # pylint: disable=invalid-name
         """
         This function creates a RegistrationCodeRedemption entry in case the registration codes were invoice generated
         and thus the order_id is missing.
         """
         code_redemption = RegistrationCodeRedemption(registration_code=course_reg_code, redeemed_by=user)
         code_redemption.save()
+        return code_redemption
 
 
 class SoftDeleteCouponManager(models.Manager):
     """ Use this manager to get objects that have a is_active=True """
-
-    def get_active_coupons_query_set(self):
+    def get_active_coupons_queryset(self):
         """
         filter the is_active = True Coupons only
         """
-        return super(SoftDeleteCouponManager, self).get_query_set().filter(is_active=True)
+        return super(SoftDeleteCouponManager, self).get_queryset().filter(is_active=True)
 
-    def get_query_set(self):
+    def get_queryset(self):
         """
         get all the coupon objects
         """
-        return super(SoftDeleteCouponManager, self).get_query_set()
+        return super(SoftDeleteCouponManager, self).get_queryset()
 
 
 class Coupon(models.Model):
@@ -826,37 +1325,75 @@ class Coupon(models.Model):
     This table contains coupon codes
     A user can get a discount offer on course if provide coupon code
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     code = models.CharField(max_length=32, db_index=True)
     description = models.CharField(max_length=255, null=True, blank=True)
     course_id = CourseKeyField(max_length=255)
     percentage_discount = models.IntegerField(default=0)
     created_by = models.ForeignKey(User)
-    created_at = models.DateTimeField(default=datetime.now(pytz.utc))
+    created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
+    expiration_date = models.DateTimeField(null=True, blank=True)
 
     def __unicode__(self):
         return "[Coupon] code: {} course: {}".format(self.code, self.course_id)
 
     objects = SoftDeleteCouponManager()
 
+    @property
+    def display_expiry_date(self):
+        """
+        return the coupon expiration date in the readable format
+        """
+        return (self.expiration_date - timedelta(days=1)).strftime("%B %d, %Y") if self.expiration_date else None
+
 
 class CouponRedemption(models.Model):
     """
     This table contain coupon redemption info
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     order = models.ForeignKey(Order, db_index=True)
     user = models.ForeignKey(User, db_index=True)
     coupon = models.ForeignKey(Coupon, db_index=True)
 
     @classmethod
-    def delete_coupon_redemption(cls, user, cart):
+    def remove_code_redemption_from_item(cls, item, user):
+        """
+        If an item removed from shopping cart then we will remove
+        the corresponding redemption info of coupon code
+        """
+        order_item_course_id = item.course_id
+        try:
+            # Try to remove redemption information of coupon code, If exist.
+            coupon_redemption = cls.objects.get(
+                user=user,
+                coupon__course_id=order_item_course_id if order_item_course_id else CourseKeyField.Empty,
+                order=item.order_id
+            )
+            coupon_redemption.delete()
+            log.info(
+                u'Coupon "%s" redemption entry removed for user "%s" for order item "%s"',
+                coupon_redemption.coupon.code,
+                user,
+                str(item.id),
+            )
+        except CouponRedemption.DoesNotExist:
+            log.debug(u'Code redemption does not exist for order item id=%s.', str(item.id))
+
+    @classmethod
+    def remove_coupon_redemption_from_cart(cls, user, cart):
         """
         This method delete coupon redemption
         """
         coupon_redemption = cls.objects.filter(user=user, order=cart)
         if coupon_redemption:
             coupon_redemption.delete()
-            log.info('Coupon redemption entry removed for user {0} for order {1}'.format(user, cart.id))
+            log.info(u'Coupon redemption entry removed for user %s for order %s', user, cart.id)
 
     @classmethod
     def get_discount_price(cls, percentage_discount, value):
@@ -875,12 +1412,15 @@ class CouponRedemption(models.Model):
         coupon_redemptions = cls.objects.filter(order=order, user=order.user)
         for coupon_redemption in coupon_redemptions:
             if coupon_redemption.coupon.code != coupon.code or coupon_redemption.coupon.id == coupon.id:
-                log.exception("Coupon redemption already exist for user '{0}' against order id '{1}'"
-                              .format(order.user.username, order.id))
+                log.exception(
+                    u"Coupon redemption already exist for user '%s' against order id '%s'",
+                    order.user.username,
+                    order.id,
+                )
                 raise MultipleCouponsNotAllowedException
 
         for item in cart_items:
-            if getattr(item, 'course_id'):
+            if item.course_id:
                 if item.course_id == coupon.course_id:
                     coupon_redemption = cls(order=order, user=order.user, coupon=coupon)
                     coupon_redemption.save()
@@ -888,20 +1428,73 @@ class CouponRedemption(models.Model):
                     item.list_price = item.unit_cost
                     item.unit_cost = discount_price
                     item.save()
-                    log.info("Discount generated for user {0} against order id '{1}' "
-                             .format(order.user.username, order.id))
+                    log.info(
+                        u"Discount generated for user %s against order id '%s'",
+                        order.user.username,
+                        order.id,
+                    )
                     is_redemption_applied = True
                     return is_redemption_applied
 
         return is_redemption_applied
+
+    @classmethod
+    def get_top_discount_codes_used(cls, course_id):
+        """
+        Returns the top discount codes used.
+
+        QuerySet = [
+            {
+                'coupon__percentage_discount': 22,
+                'coupon__code': '12',
+                'coupon__used_count': '2',
+            },
+            {
+                ...
+            }
+        ]
+        """
+        return cls.objects.filter(order__status='purchased', coupon__course_id=course_id).values(
+            'coupon__code', 'coupon__percentage_discount'
+        ).annotate(coupon__used_count=Count('coupon__code')).order_by('-coupon__used_count')
+
+    @classmethod
+    def get_total_coupon_code_purchases(cls, course_id):
+        """
+        returns total seats purchases using coupon codes
+        """
+        return cls.objects.filter(order__status='purchased', coupon__course_id=course_id).aggregate(Count('coupon'))
 
 
 class PaidCourseRegistration(OrderItem):
     """
     This is an inventory item for paying for a course registration
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     course_id = CourseKeyField(max_length=128, db_index=True)
-    mode = models.SlugField(default=CourseMode.DEFAULT_MODE_SLUG)
+    mode = models.SlugField(default=CourseMode.DEFAULT_SHOPPINGCART_MODE_SLUG)
+    course_enrollment = models.ForeignKey(CourseEnrollment, null=True)
+
+    @classmethod
+    def get_self_purchased_seat_count(cls, course_key, status='purchased'):
+        """
+        returns the count of paid_course items filter by course_id and status.
+        """
+        return cls.objects.filter(course_id=course_key, status=status).count()
+
+    @classmethod
+    def get_course_item_for_user_enrollment(cls, user, course_id, course_enrollment):
+        """
+        Returns PaidCourseRegistration object if user has payed for
+        the course enrollment else Returns None
+        """
+        try:
+            return cls.objects.filter(course_id=course_id, user=user, course_enrollment=course_enrollment,
+                                      status='purchased').latest('id')
+        except PaidCourseRegistration.DoesNotExist:
+            return None
 
     @classmethod
     def contained_in_order(cls, order, course_id):
@@ -915,12 +1508,17 @@ class PaidCourseRegistration(OrderItem):
         ]
 
     @classmethod
-    def get_total_amount_of_purchased_item(cls, course_key):
+    def get_total_amount_of_purchased_item(cls, course_key, status='purchased'):
         """
         This will return the total amount of money that a purchased course generated
         """
         total_cost = 0
-        result = cls.objects.filter(course_id=course_key, status='purchased').aggregate(total=Sum('unit_cost', field='qty * unit_cost'))  # pylint: disable=no-member
+        result = cls.objects.filter(course_id=course_key, status=status).aggregate(
+            total=Sum(
+                F('qty') * F('unit_cost'),
+                output_field=models.DecimalField(decimal_places=2, max_digits=30)
+            )
+        )
 
         if result['total'] is not None:
             total_cost = result['total']
@@ -928,8 +1526,9 @@ class PaidCourseRegistration(OrderItem):
         return total_cost
 
     @classmethod
-    @transaction.commit_on_success
-    def add_to_order(cls, order, course_id, mode_slug=CourseMode.DEFAULT_MODE_SLUG, cost=None, currency=None):
+    @transaction.atomic
+    def add_to_order(cls, order, course_id, mode_slug=CourseMode.DEFAULT_SHOPPINGCART_MODE_SLUG,
+                     cost=None, currency=None):  # pylint: disable=arguments-differ
         """
         A standardized way to create these objects, with sensible defaults filled in.
         Will update the cost if called on an order that already carries the course.
@@ -946,8 +1545,12 @@ class PaidCourseRegistration(OrderItem):
             raise CourseDoesNotExistException
 
         if cls.contained_in_order(order, course_id):
-            log.warning("User {} tried to add PaidCourseRegistration for course {}, already in cart id {}"
-                        .format(order.user.email, course_id, order.id))
+            log.warning(
+                u"User %s tried to add PaidCourseRegistration for course %s, already in cart id %s",
+                order.user.email,
+                course_id,
+                order.id,
+            )
             raise ItemAlreadyInCartException
 
         if CourseEnrollment.is_enrolled(user=order.user, course_key=course_id):
@@ -960,7 +1563,7 @@ class PaidCourseRegistration(OrderItem):
         course_mode = CourseMode.mode_for_course(course_id, mode_slug)
         if not course_mode:
             # user could have specified a mode that's not set, in that case return the DEFAULT_MODE
-            course_mode = CourseMode.DEFAULT_MODE
+            course_mode = CourseMode.DEFAULT_SHOPPINGCART_MODE
         if not cost:
             cost = course_mode.min_price
         if not currency:
@@ -973,8 +1576,9 @@ class PaidCourseRegistration(OrderItem):
         item.mode = course_mode.slug
         item.qty = 1
         item.unit_cost = cost
+        item.list_price = cost
         item.line_desc = _(u'Registration for Course: {course_name}').format(
-            course_name=course.display_name_with_default)
+            course_name=course.display_name_with_default_escaped)
         item.currency = currency
         order.currency = currency
         item.report_comments = item.csv_report_comments
@@ -992,21 +1596,29 @@ class PaidCourseRegistration(OrderItem):
         would in fact be quite silly since there's a clear back door.
         """
         if not modulestore().has_course(self.course_id):
-            raise PurchasedCallbackException(
-                "The customer purchased Course {0}, but that course doesn't exist!".format(self.course_id))
+            msg = u"The customer purchased Course {0}, but that course doesn't exist!".format(self.course_id)
+            log.error(msg)
+            raise PurchasedCallbackException(msg)
 
-        CourseEnrollment.enroll(user=self.user, course_key=self.course_id, mode=self.mode)
+        # enroll in course and link to the enrollment_id
+        self.course_enrollment = CourseEnrollment.enroll(user=self.user, course_key=self.course_id, mode=self.mode)
+        self.save()
 
         log.info("Enrolled {0} in paid course {1}, paid ${2}"
-                 .format(self.user.email, self.course_id, self.line_cost))  # pylint: disable=no-member
+                 .format(self.user.email, self.course_id, self.line_cost))
 
     def generate_receipt_instructions(self):
         """
         Generates instructions when the user has purchased a PaidCourseRegistration.
         Basically tells the user to visit the dashboard to see their new classes
         """
-        notification = (_('Please visit your <a href="{dashboard_link}">dashboard</a>  to see your new course.')
-                        .format(dashboard_link=reverse('dashboard')))
+        notification = _(
+            u"Please visit your {link_start}dashboard{link_end} "
+            u"to see your new course."
+        ).format(
+            link_start=u'<a href="{url}">'.format(url=reverse('dashboard')),
+            link_end=u'</a>',
+        )
 
         return self.pk_with_subclass, set([notification])
 
@@ -1035,7 +1647,7 @@ class PaidCourseRegistration(OrderItem):
         sku = data['sku']
         if self.course_id != CourseKeyField.Empty:
             data['name'] = unicode(self.course_id)
-            data['category'] = unicode(self.course_id.org)  # pylint: disable=no-member
+            data['category'] = unicode(self.course_id.org)
         if self.mode:
             data['sku'] = sku + u'.' + unicode(self.mode)
         return data
@@ -1046,8 +1658,24 @@ class CourseRegCodeItem(OrderItem):
     This is an inventory item for paying for
     generating course registration codes
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     course_id = CourseKeyField(max_length=128, db_index=True)
-    mode = models.SlugField(default=CourseMode.DEFAULT_MODE_SLUG)
+    mode = models.SlugField(default=CourseMode.DEFAULT_SHOPPINGCART_MODE_SLUG)
+
+    @classmethod
+    def get_bulk_purchased_seat_count(cls, course_key, status='purchased'):
+        """
+        returns the sum of bulk purchases seats.
+        """
+        total = 0
+        result = cls.objects.filter(course_id=course_key, status=status).aggregate(total=Sum('qty'))
+
+        if result['total'] is not None:
+            total = result['total']
+
+        return total
 
     @classmethod
     def contained_in_order(cls, order, course_id):
@@ -1061,12 +1689,17 @@ class CourseRegCodeItem(OrderItem):
         ]
 
     @classmethod
-    def get_total_amount_of_purchased_item(cls, course_key):
+    def get_total_amount_of_purchased_item(cls, course_key, status='purchased'):
         """
         This will return the total amount of money that a purchased course generated
         """
         total_cost = 0
-        result = cls.objects.filter(course_id=course_key, status='purchased').aggregate(total=Sum('unit_cost', field='qty * unit_cost'))  # pylint: disable=no-member
+        result = cls.objects.filter(course_id=course_key, status=status).aggregate(
+            total=Sum(
+                F('qty') * F('unit_cost'),
+                output_field=models.DecimalField(decimal_places=2, max_digits=30)
+            )
+        )
 
         if result['total'] is not None:
             total_cost = result['total']
@@ -1074,8 +1707,9 @@ class CourseRegCodeItem(OrderItem):
         return total_cost
 
     @classmethod
-    @transaction.commit_on_success
-    def add_to_order(cls, order, course_id, qty, mode_slug=CourseMode.DEFAULT_MODE_SLUG, cost=None, currency=None):  # pylint: disable=arguments-differ
+    @transaction.atomic
+    def add_to_order(cls, order, course_id, qty, mode_slug=CourseMode.DEFAULT_SHOPPINGCART_MODE_SLUG,
+                     cost=None, currency=None):  # pylint: disable=arguments-differ
         """
         A standardized way to create these objects, with sensible defaults filled in.
         Will update the cost if called on an order that already carries the course.
@@ -1105,8 +1739,8 @@ class CourseRegCodeItem(OrderItem):
         ### handle default arguments for mode_slug, cost, currency
         course_mode = CourseMode.mode_for_course(course_id, mode_slug)
         if not course_mode:
-            # user could have specified a mode that's not set, in that case return the DEFAULT_MODE
-            course_mode = CourseMode.DEFAULT_MODE
+            # user could have specified a mode that's not set, in that case return the DEFAULT_SHOPPINGCART_MODE
+            course_mode = CourseMode.DEFAULT_SHOPPINGCART_MODE
         if not cost:
             cost = course_mode.min_price
         if not currency:
@@ -1118,9 +1752,10 @@ class CourseRegCodeItem(OrderItem):
         item.status = order.status
         item.mode = course_mode.slug
         item.unit_cost = cost
+        item.list_price = cost
         item.qty = qty
         item.line_desc = _(u'Enrollment codes for Course: {course_name}').format(
-            course_name=course.display_name_with_default)
+            course_name=course.display_name_with_default_escaped)
         item.currency = currency
         order.currency = currency
         item.report_comments = item.csv_report_comments
@@ -1136,8 +1771,9 @@ class CourseRegCodeItem(OrderItem):
         be redeemed by users
         """
         if not modulestore().has_course(self.course_id):
-            raise PurchasedCallbackException(
-                "The customer purchased Course {0}, but that course doesn't exist!".format(self.course_id))
+            msg = u"The customer purchased Course {0}, but that course doesn't exist!".format(self.course_id)
+            log.error(msg)
+            raise PurchasedCallbackException(msg)
         total_registration_codes = int(self.qty)
 
         # we need to import here because of a circular dependency
@@ -1146,10 +1782,10 @@ class CourseRegCodeItem(OrderItem):
         # is in another PR (for another feature)
         from instructor.views.api import save_registration_code
         for i in range(total_registration_codes):  # pylint: disable=unused-variable
-            save_registration_code(self.user, self.course_id, invoice=None, order=self.order)
+            save_registration_code(self.user, self.course_id, self.mode, order=self.order)
 
         log.info("Enrolled {0} in paid course {1}, paid ${2}"
-                 .format(self.user.email, self.course_id, self.line_cost))  # pylint: disable=no-member
+                 .format(self.user.email, self.course_id, self.line_cost))
 
     @property
     def csv_report_comments(self):
@@ -1176,7 +1812,7 @@ class CourseRegCodeItem(OrderItem):
         sku = data['sku']
         if self.course_id != CourseKeyField.Empty:
             data['name'] = unicode(self.course_id)
-            data['category'] = unicode(self.course_id.org)  # pylint: disable=no-member
+            data['category'] = unicode(self.course_id.org)
         if self.mode:
             data['sku'] = sku + u'.' + unicode(self.mode)
         return data
@@ -1189,6 +1825,9 @@ class CourseRegCodeItemAnnotation(models.Model):
     And unfortunately we didn't have the concept of a "SKU" or stock item where we could keep this association,
     so this is to retrofit it.
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     course_id = CourseKeyField(unique=True, max_length=128, db_index=True)
     annotation = models.TextField(null=True)
 
@@ -1204,6 +1843,9 @@ class PaidCourseRegistrationAnnotation(models.Model):
     And unfortunately we didn't have the concept of a "SKU" or stock item where we could keep this association,
     so this is to retrofit it.
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     course_id = CourseKeyField(unique=True, max_length=128, db_index=True)
     annotation = models.TextField(null=True)
 
@@ -1216,6 +1858,9 @@ class CertificateItem(OrderItem):
     """
     This is an inventory item for purchasing certificates
     """
+    class Meta(object):
+        app_label = "shoppingcart"
+
     course_id = CourseKeyField(max_length=128, db_index=True)
     course_enrollment = models.ForeignKey(CourseEnrollment)
     mode = models.SlugField()
@@ -1238,13 +1883,17 @@ class CertificateItem(OrderItem):
         try:
             target_cert = target_certs[0]
         except IndexError:
-            log.error("Matching CertificateItem not found while trying to refund.  User %s, Course %s", course_enrollment.user, course_enrollment.course_id)
+            log.error(
+                u"Matching CertificateItem not found while trying to refund. User %s, Course %s",
+                course_enrollment.user,
+                course_enrollment.course_id,
+            )
             return
         target_cert.status = 'refunded'
         target_cert.refund_requested_time = datetime.now(pytz.utc)
         target_cert.save()
-        target_cert.order.status = 'refunded'
-        target_cert.order.save()
+
+        target_cert.order.refund()
 
         order_number = target_cert.order_id
         # send billing an email so they can handle refunding
@@ -1270,7 +1919,7 @@ class CertificateItem(OrderItem):
         return target_cert
 
     @classmethod
-    @transaction.commit_on_success
+    @transaction.atomic
     def add_to_order(cls, order, course_id, cost, mode, currency='usd'):
         """
         Add a CertificateItem to an order
@@ -1298,7 +1947,12 @@ class CertificateItem(OrderItem):
         if mode in valid_modes:
             mode_info = valid_modes[mode]
         else:
-            raise InvalidCartItem(_("Mode {mode} does not exist for {course_id}").format(mode=mode, course_id=course_id))
+            msg = u"Mode {mode} does not exist for {course_id}".format(mode=mode, course_id=course_id)
+            log.error(msg)
+            raise InvalidCartItem(
+                _(u"Mode {mode} does not exist for {course_id}").format(mode=mode, course_id=course_id)
+            )
+
         item, _created = cls.objects.get_or_create(
             order=order,
             user=order.user,
@@ -1309,6 +1963,7 @@ class CertificateItem(OrderItem):
         item.status = order.status
         item.qty = 1
         item.unit_cost = cost
+        item.list_price = cost
         course_name = modulestore().get_course(course_id).display_name
         # Translators: In this particular case, mode_name refers to a
         # particular mode (i.e. Honor Code Certificate, Verified Certificate, etc)
@@ -1327,64 +1982,45 @@ class CertificateItem(OrderItem):
         """
         When purchase goes through, activate and update the course enrollment for the correct mode
         """
-        try:
-            verification_attempt = SoftwareSecurePhotoVerification.active_for_user(self.course_enrollment.user)
-            verification_attempt.submit()
-        except Exception:
-            log.exception(
-                "Could not submit verification attempt for enrollment {}".format(self.course_enrollment)
-            )
         self.course_enrollment.change_mode(self.mode)
         self.course_enrollment.activate()
 
-    @property
-    def single_item_receipt_template(self):
-        if self.mode in ('verified', 'professional'):
-            return 'shoppingcart/verified_cert_receipt.html'
-        else:
-            return super(CertificateItem, self).single_item_receipt_template
-
-    @property
-    def single_item_receipt_context(self):
-        course = modulestore().get_course(self.course_id)
-        return {
-            "course_id": self.course_id,
-            "course_name": course.display_name_with_default,
-            "course_org": course.display_org_with_default,
-            "course_num": course.display_number_with_default,
-            "course_start_date_text": course.start_datetime_text(),
-            "course_has_started": course.start > datetime.today().replace(tzinfo=pytz.utc),
-            "course_root_url": reverse(
-                'course_root',
-                kwargs={'course_id': self.course_id.to_deprecated_string()}  # pylint: disable=no-member
-            ),
-            "dashboard_url": reverse('dashboard'),
-        }
-
-    @property
     def additional_instruction_text(self):
-        refund_reminder = _(
-            "You have up to two weeks into the course to unenroll from the Verified Certificate option "
-            "and receive a full refund. To receive your refund, contact {billing_email}. "
-            "Please include your order number in your email. "
-            "Please do NOT include your credit card information."
-        ).format(billing_email=settings.PAYMENT_SUPPORT_EMAIL)
+        verification_reminder = ""
+        refund_reminder_msg = _("You can unenroll in the course and receive a full refund for 14 days after the course "
+                                "start date. ")
+        is_enrollment_mode_verified = self.course_enrollment.is_verified_enrollment()
+        is_professional_mode_verified = self.course_enrollment.is_professional_enrollment()
 
-        if settings.FEATURES.get('SEPARATE_VERIFICATION_FROM_PAYMENT'):
+        if is_enrollment_mode_verified:
             domain = microsite.get_value('SITE_NAME', settings.SITE_NAME)
-            path = reverse('verify_student_verify_later', kwargs={'course_id': unicode(self.course_id)})
+            path = reverse('verify_student_verify_now', kwargs={'course_id': unicode(self.course_id)})
             verification_url = "http://{domain}{path}".format(domain=domain, path=path)
 
             verification_reminder = _(
                 "If you haven't verified your identity yet, please start the verification process ({verification_url})."
             ).format(verification_url=verification_url)
 
-            return "{verification_reminder} {refund_reminder}".format(
-                verification_reminder=verification_reminder,
-                refund_reminder=refund_reminder
-            )
-        else:
-            return refund_reminder
+        if is_professional_mode_verified:
+            refund_reminder_msg = _("You can unenroll in the course and receive a full refund for 2 days after the "
+                                    "course start date. ")
+
+        refund_reminder = _(
+            "{refund_reminder_msg}"
+            "To receive your refund, contact {billing_email}. "
+            "Please include your order number in your email. "
+            "Please do NOT include your credit card information."
+        ).format(
+            refund_reminder_msg=refund_reminder_msg,
+            billing_email=settings.PAYMENT_SUPPORT_EMAIL
+        )
+
+        # Need this to be unicode in case the reminder strings
+        # have been translated and contain non-ASCII unicode
+        return u"{verification_reminder} {refund_reminder}".format(
+            verification_reminder=verification_reminder,
+            refund_reminder=refund_reminder
+        )
 
     @classmethod
     def verified_certificates_count(cls, course_id, status):
@@ -1433,7 +2069,7 @@ class CertificateItem(OrderItem):
         sku = data['sku']
         if self.course_id != CourseKeyField.Empty:
             data['name'] = unicode(self.course_id)
-            data['category'] = unicode(self.course_id.org)  # pylint: disable=no-member
+            data['category'] = unicode(self.course_id.org)
         if self.mode:
             data['sku'] = sku + u'.' + unicode(self.mode)
         return data
@@ -1441,7 +2077,8 @@ class CertificateItem(OrderItem):
 
 class DonationConfiguration(ConfigurationModel):
     """Configure whether donations are enabled on the site."""
-    pass
+    class Meta(ConfigurationModel.Meta):
+        app_label = "shoppingcart"
 
 
 class Donation(OrderItem):
@@ -1450,6 +2087,9 @@ class Donation(OrderItem):
     Donations can be made for a specific course or to the organization as a whole.
     Users can choose the donation amount.
     """
+
+    class Meta(object):
+        app_label = "shoppingcart"
 
     # Types of donations
     DONATION_TYPES = (
@@ -1466,7 +2106,7 @@ class Donation(OrderItem):
     course_id = CourseKeyField(max_length=255, db_index=True)
 
     @classmethod
-    @transaction.commit_on_success
+    @transaction.atomic
     def add_to_order(cls, order, donation_amount, course_id=None, currency='usd'):
         """Add a donation to an order.
 
@@ -1525,8 +2165,7 @@ class Donation(OrderItem):
         """
         return self.pk_with_subclass, set([self._tax_deduction_msg()])
 
-    @property
-    def additional_instruction_text(self):
+    def additional_instruction_text(self, **kwargs):
         """Provide information about tax-deductible donations in the confirmation email.
 
         Returns:
@@ -1549,7 +2188,7 @@ class Donation(OrderItem):
         ).format(platform_name=settings.PLATFORM_NAME)
 
     @classmethod
-    def _line_item_description(self, course_id=None):
+    def _line_item_description(cls, course_id=None):
         """Create a line-item description for the donation.
 
         Includes the course display name if provided.
@@ -1569,10 +2208,11 @@ class Donation(OrderItem):
         if course_id is not None:
             course = modulestore().get_course(course_id)
             if course is None:
-                err = _(
-                    u"Could not find a course with the ID '{course_id}'"
-                ).format(course_id=course_id)
-                raise CourseDoesNotExistException(err)
+                msg = u"Could not find a course with the ID '{course_id}'".format(course_id=course_id)
+                log.error(msg)
+                raise CourseDoesNotExistException(
+                    _(u"Could not find a course with the ID '{course_id}'").format(course_id=course_id)
+                )
 
             return _(u"Donation for {course}").format(course=course.display_name)
 
@@ -1601,8 +2241,15 @@ class Donation(OrderItem):
         data = super(Donation, self).analytics_data()
         if self.course_id != CourseKeyField.Empty:
             data['name'] = unicode(self.course_id)
-            data['category'] = unicode(self.course_id.org)  # pylint: disable=no-member
+            data['category'] = unicode(self.course_id.org)
         else:
             data['name'] = settings.PLATFORM_NAME
             data['category'] = settings.PLATFORM_NAME
         return data
+
+    @property
+    def pdf_receipt_display_name(self):
+        """
+            How to display this item on a PDF printed receipt file.
+        """
+        return self._line_item_description(course_id=self.course_id)

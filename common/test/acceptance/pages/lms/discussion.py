@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 
+from bok_choy.javascript import wait_for_js
 from bok_choy.page_object import PageObject
 from bok_choy.promise import EmptyPromise, Promise
 
@@ -27,7 +28,7 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
         return self.q(css=self.thread_selector + " " + selector)
 
     def is_browser_on_page(self):
-        return self.q(css=self.thread_selector).present
+        return self.q(css=self.thread_selector).visible
 
     def _get_element_text(self, selector):
         """
@@ -106,13 +107,40 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
             "Response field received focus"
         ).fulfill()
 
+    @wait_for_js
     def is_response_editor_visible(self, response_id):
         """Returns true if the response editor is present, false otherwise"""
         return self._is_element_visible(".response_{} .edit-post-body".format(response_id))
 
+    @wait_for_js
+    def is_discussion_body_visible(self):
+        return self._is_element_visible(".post-body")
+
+    def verify_mathjax_preview_available(self):
+        """ Checks that MathJax Preview css class is present """
+        self.wait_for(
+            lambda: len(self.q(css=".MathJax_Preview").text) > 0 and self.q(css=".MathJax_Preview").text[0] == "",
+            description="MathJax Preview is rendered"
+        )
+
+    def verify_mathjax_rendered(self):
+        """ Checks that MathJax css class is present """
+        self.wait_for(
+            lambda: self._is_element_visible(".MathJax"),
+            description="MathJax Preview is rendered"
+        )
+
+    def is_response_visible(self, comment_id):
+        """Returns true if the response is viewable onscreen"""
+        return self._is_element_visible(".response_{} .response-body".format(comment_id))
+
     def is_response_editable(self, response_id):
         """Returns true if the edit response button is present, false otherwise"""
-        return self._is_element_visible(".response_{} .discussion-response .action-edit".format(response_id))
+        with self._secondary_action_menu_open(".response_{} .discussion-response".format(response_id)):
+            return self._is_element_visible(".response_{} .discussion-response .action-edit".format(response_id))
+
+    def get_response_body(self, response_id):
+        return self._get_element_text(".response_{} .response-body".format(response_id))
 
     def start_response_edit(self, response_id):
         """Click the edit button for the response, loading the editing view"""
@@ -122,6 +150,103 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
                 lambda: self.is_response_editor_visible(response_id),
                 "Response edit started"
             ).fulfill()
+
+    def get_link_href(self):
+        """Extracts href attribute of the referenced link"""
+        link_href = self._find_within(".post-body p a").attrs('href')
+        return link_href[0] if link_href else None
+
+    def get_response_vote_count(self, response_id):
+        return self._get_element_text(".response_{} .discussion-response .action-vote .vote-count".format(response_id))
+
+    def vote_response(self, response_id):
+        current_count = self._get_element_text(".response_{} .discussion-response .action-vote .vote-count".format(response_id))
+        self._find_within(".response_{} .discussion-response .action-vote".format(response_id)).first.click()
+        self.wait_for_ajax()
+        EmptyPromise(
+            lambda: current_count != self.get_response_vote_count(response_id),
+            "Response is voted"
+        ).fulfill()
+
+    def is_response_reported(self, response_id):
+        return self._is_element_visible(".response_{} .discussion-response .post-label-reported".format(response_id))
+
+    def report_response(self, response_id):
+        with self._secondary_action_menu_open(".response_{} .discussion-response".format(response_id)):
+            self._find_within(".response_{} .discussion-response .action-report".format(response_id)).first.click()
+            self.wait_for_ajax()
+            EmptyPromise(
+                lambda: self.is_response_reported(response_id),
+                "Response is reported"
+            ).fulfill()
+
+    def is_response_endorsed(self, response_id):
+        return "endorsed" in self._get_element_text(".response_{} .discussion-response .posted-details".format(response_id))
+
+    def endorse_response(self, response_id):
+        self._find_within(".response_{} .discussion-response .action-endorse".format(response_id)).first.click()
+        self.wait_for_ajax()
+        EmptyPromise(
+            lambda: self.is_response_endorsed(response_id),
+            "Response edit started"
+        ).fulfill()
+
+    def set_response_editor_value(self, response_id, new_body):
+        """Replace the contents of the response editor"""
+        self._find_within(".response_{} .discussion-response .wmd-input".format(response_id)).fill(new_body)
+
+    def verify_link_editor_error_messages_shown(self):
+        """
+        Confirm that the error messages are displayed in the editor.
+        """
+        def errors_visible():
+            """
+            Returns True if both errors are visible, False otherwise.
+            """
+            return (
+                self.q(css="#new-url-input-field-message.has-error").visible and
+                self.q(css="#new-url-desc-input-field-message.has-error").visible
+            )
+
+        self.wait_for(errors_visible, "Form errors should be visible.")
+
+    def add_content_via_editor_button(self, content_type, response_id, url, description, is_decorative=False):
+        """Replace the contents of the response editor"""
+        self._find_within(
+            "#wmd-{}-button-edit-post-body-{}".format(
+                content_type,
+                response_id,
+            )
+        ).click()
+        self.q(css='#new-url-input').fill(url)
+        self.q(css='#new-url-desc-input').fill(description)
+
+        if is_decorative:
+            self.q(css='#img-is-decorative').click()
+
+        self.q(css='input[value="OK"]').click()
+
+    def submit_response_edit(self, response_id, new_response_body):
+        """Click the submit button on the response editor"""
+
+        def submit_response_check_func():
+            """
+            Tries to click "Update post" and returns True if the post
+            was successfully updated, False otherwise.
+            """
+            self._find_within(
+                ".response_{} .discussion-response .post-update".format(
+                    response_id
+                )
+            ).first.click()
+
+            return (
+                not self.is_response_editor_visible(response_id) and
+                self.is_response_visible(response_id) and
+                self.get_response_body(response_id) == new_response_body
+            )
+
+        self.wait_for(submit_response_check_func, "Comment edit succeeded")
 
     def is_show_comments_visible(self, response_id):
         """Returns true if the "show comments" link is visible for a response"""
@@ -193,6 +318,7 @@ class DiscussionThreadPage(PageObject, DiscussionPageMixin):
     def submit_comment_edit(self, comment_id, new_comment_body):
         """Click the submit button on the comment editor"""
         self._find_within("#comment_{} .post-update".format(comment_id)).first.click()
+        self.wait_for_ajax()
         EmptyPromise(
             lambda: (
                 not self.is_comment_editor_visible(comment_id) and
@@ -250,19 +376,60 @@ class DiscussionSortPreferencePage(CoursePage):
 
 
 class DiscussionTabSingleThreadPage(CoursePage):
-    def __init__(self, browser, course_id, thread_id):
+    def __init__(self, browser, course_id, discussion_id, thread_id):
         super(DiscussionTabSingleThreadPage, self).__init__(browser, course_id)
         self.thread_page = DiscussionThreadPage(
             browser,
             "body.discussion .discussion-article[data-id='{thread_id}']".format(thread_id=thread_id)
         )
-        self.url_path = "discussion/forum/dummy/threads/" + thread_id
+        self.url_path = "discussion/forum/{discussion_id}/threads/{thread_id}".format(
+            discussion_id=discussion_id, thread_id=thread_id
+        )
 
     def is_browser_on_page(self):
         return self.thread_page.is_browser_on_page()
 
     def __getattr__(self, name):
         return getattr(self.thread_page, name)
+
+    def close_open_thread(self):
+        with self.thread_page._secondary_action_menu_open(".forum-thread-main-wrapper"):
+            self._find_within(".forum-thread-main-wrapper .action-close").first.click()
+
+    def is_focused_on_element(self, selector):
+        """
+        Check if the focus is on element
+        """
+        return self.browser.execute_script("return $('{}').is(':focus')".format(selector))
+
+    def _thread_is_rendered_successfully(self, thread_id):
+        return self.q(css=".discussion-article[data-id='{}']".format(thread_id)).visible
+
+    def click_and_open_thread(self, thread_id):
+        """
+        Click specific thread on the list.
+        """
+        thread_selector = "li[data-id='{}']".format(thread_id)
+        self.q(css=thread_selector).first.click()
+        EmptyPromise(
+            lambda: self._thread_is_rendered_successfully(thread_id),
+            "Thread has been rendered"
+        ).fulfill()
+
+    def check_threads_rendered_successfully(self, thread_count):
+        """
+        Count the number of threads available on page.
+        """
+        return len(self.q(css=".forum-nav-thread").results) == thread_count
+
+    def check_focus_is_set(self, selector):
+        """
+        Check focus is set
+        """
+        EmptyPromise(
+            lambda: self.is_focused_on_element(selector),
+            "Focus is on other element"
+        ).fulfill()
 
 
 class InlineDiscussionPage(PageObject):
@@ -271,7 +438,7 @@ class InlineDiscussionPage(PageObject):
     def __init__(self, browser, discussion_id):
         super(InlineDiscussionPage, self).__init__(browser)
         self._discussion_selector = (
-            "body.courseware .discussion-module[data-discussion-id='{discussion_id}'] ".format(
+            ".discussion-module[data-discussion-id='{discussion_id}'] ".format(
                 discussion_id=discussion_id
             )
         )
@@ -284,6 +451,7 @@ class InlineDiscussionPage(PageObject):
         return self.q(css=self._discussion_selector + " " + selector)
 
     def is_browser_on_page(self):
+        self.wait_for_ajax()
         return self.q(css=self._discussion_selector).present
 
     def is_discussion_expanded(self):
@@ -300,8 +468,41 @@ class InlineDiscussionPage(PageObject):
     def get_num_displayed_threads(self):
         return len(self._find_within(".discussion-thread"))
 
+    def has_thread(self, thread_id):
+        """Returns true if this page is showing the thread with the specified id."""
+        return self._find_within('.discussion-thread#thread_{}'.format(thread_id)).present
+
     def element_exists(self, selector):
         return self.q(css=self._discussion_selector + " " + selector).present
+
+    def is_new_post_opened(self):
+        return self._find_within(".new-post-article").visible
+
+    def click_element(self, selector):
+        self.wait_for_element_presence(
+            "{discussion} {selector}".format(discussion=self._discussion_selector, selector=selector),
+            "{selector} is visible".format(selector=selector)
+        )
+        self._find_within(selector).click()
+
+    def click_cancel_new_post(self):
+        self.click_element(".cancel")
+        EmptyPromise(
+            lambda: not self.is_new_post_opened(),
+            "New post closed"
+        ).fulfill()
+
+    def click_new_post_button(self):
+        self.click_element(".new-post-btn")
+        EmptyPromise(
+            self.is_new_post_opened,
+            "New post opened"
+        ).fulfill()
+
+    @wait_for_js
+    def _is_element_visible(self, selector):
+        query = self._find_within(selector)
+        return query.present and query.visible
 
 
 class InlineDiscussionThreadPage(DiscussionThreadPage):
@@ -322,6 +523,13 @@ class InlineDiscussionThreadPage(DiscussionThreadPage):
     def is_thread_anonymous(self):
         return not self.q(css=".posted-details > .username").present
 
+    @wait_for_js
+    def check_if_selector_is_focused(self, selector):
+        """
+        Check if selector is focused
+        """
+        return self.browser.execute_script("return $('{}').is(':focus')".format(selector))
+
 
 class DiscussionUserProfilePage(CoursePage):
 
@@ -338,10 +546,14 @@ class DiscussionUserProfilePage(CoursePage):
         return (
             self.q(css='section.discussion-user-threads[data-course-id="{}"]'.format(self.course_id)).present
             and
-            self.q(css='section.user-profile div.sidebar-username').present
+            self.q(css='section.user-profile a.learner-profile-link').present
             and
-            self.q(css='section.user-profile div.sidebar-username').text[0] == self.username
+            self.q(css='section.user-profile a.learner-profile-link').text[0] == self.username
         )
+
+    @wait_for_js
+    def is_window_on_top(self):
+        return self.browser.execute_script("return $('html, body').offset().top") == 0
 
     def get_shown_thread_ids(self):
         elems = self.q(css="article.discussion-thread")
@@ -397,12 +609,28 @@ class DiscussionUserProfilePage(CoursePage):
 
     def click_prev_page(self):
         self._click_pager_with_text(self.TEXT_PREV, self.get_current_page() - 1)
+        EmptyPromise(
+            self.is_window_on_top,
+            "Window is on top"
+        ).fulfill()
 
     def click_next_page(self):
         self._click_pager_with_text(self.TEXT_NEXT, self.get_current_page() + 1)
+        EmptyPromise(
+            self.is_window_on_top,
+            "Window is on top"
+        ).fulfill()
 
     def click_on_page(self, page_number):
         self._click_pager_with_text(unicode(page_number), page_number)
+        EmptyPromise(
+            self.is_window_on_top,
+            "Window is on top"
+        ).fulfill()
+
+    def click_on_sidebar_username(self):
+        self.wait_for_page()
+        self.q(css='.learner-profile-link').first.click()
 
 
 class DiscussionTabHomePage(CoursePage, DiscussionPageMixin):
@@ -442,3 +670,31 @@ class DiscussionTabHomePage(CoursePage, DiscussionPageMixin):
             lambda: _match_messages(text).results == [],
             "waiting for dismissed alerts to disappear"
         ).fulfill()
+
+    def click_new_post_button(self):
+        """
+        Clicks the 'New Post' button.
+        """
+        self.new_post_button.click()
+        EmptyPromise(
+            lambda: (
+                self.new_post_form
+            ),
+            "New post action succeeded"
+        ).fulfill()
+
+    @property
+    def new_post_button(self):
+        """
+        Returns the new post button.
+        """
+        elements = self.q(css="ol.course-tabs .new-post-btn")
+        return elements.first if elements.visible and len(elements) == 1 else None
+
+    @property
+    def new_post_form(self):
+        """
+        Returns the new post form.
+        """
+        elements = self.q(css=".forum-new-post-form")
+        return elements[0] if elements.visible and len(elements) == 1 else None

@@ -1,7 +1,25 @@
 // studio - base styling
 // ====================
 
-// basic setup
+// Table of Contents
+// * +Basic Setup
+// * +Typography - Basic
+// * +Typography - Primary Content
+// * +Typography - Secondary Content
+// * +Typography - Loose Headings
+// * +Layout - Basic
+// * +Layout - Basic Page Header
+// * +Layout - Basic Page Content
+// * +Layout - Primary Content
+// * +Layout - Supplemental Content
+// * +Layout - Grandfathered
+// * +UI - Actions
+// * +UI - Misc
+// * +Utility - Basic
+// * +JS Dependent
+
+// +Basic Setup
+// ====================
 html {
   font-size: 62.5%;
   height: 102%; // force scrollbar to prevent jump when scroll appears, cannot use overflow because it breaks drag
@@ -38,7 +56,7 @@ h1 {
 }
 
 .page-actions {
-  margin-bottom: 30px;
+  margin-bottom: ($baseline*1.5);
 }
 
 .wrapper {
@@ -47,9 +65,8 @@ h1 {
   width: 100%;
 }
 
+// +Typography - Basic
 // ====================
-
-// typography - basic
 .page-header {
   @extend %t-title3;
   @extend %t-strong;
@@ -93,9 +110,8 @@ h1 {
   }
 }
 
+// +Typography - Primary Content
 // ====================
-
-// typography - primary content
 .content-primary {
 
   .section-header {
@@ -131,7 +147,8 @@ h1 {
   }
 }
 
-// typography - primary content
+// +Typography - Secondary Content
+// ====================
 .content-secondary {
 
   .section-header {
@@ -159,44 +176,12 @@ h1 {
   }
 }
 
+// +Typography - Loose Headings  (BT: needs to be removed once html is clean)
 // ====================
-
-// typography - loose headings (BT: needs to be removed once html is clean)
 .title-1, .title-2, .title-3, .title-4, .title-5, .title-6 {
   @extend %t-strong;
 }
 
-// typography - primary content
-.content-secondary {
-
-  .section-header {
-    color: $gray-d3;
-
-    .subtitle {
-      color: $gray-l2;
-    }
-  }
-
-  .content-header {
-    color: $gray-d3;
-
-    .subtitle {
-      color: $gray-l2;
-    }
-  }
-
-  .content-header {
-    color: $gray-d3;
-
-    .subtitle {
-      color: $gray-l2;
-    }
-  }
-}
-
-// ====================
-
-// typography - loose headings (BT: needs to be removed once html is clean)
 .title-1 {
   @extend %t-title3;
   margin-bottom: ($baseline*1.5);
@@ -240,16 +225,14 @@ p, ul, ol, dl {
   }
 }
 
+// +Layout - Basic
 // ====================
-
-// layout - basic
 .wrapper-view {
 
 }
 
+// +Layout - Basic Page Header
 // ====================
-
-// layout - basic page header
 .wrapper-mast {
   margin: ($baseline*1.5) 0 0 0;
   padding: 0 $baseline;
@@ -391,7 +374,8 @@ p, ul, ol, dl {
   }
 }
 
-// layout - basic page content
+// +Layout - Basic Page Content
+// ====================
 .wrapper-content {
   margin: 0;
   padding: 0 $baseline;
@@ -434,7 +418,8 @@ p, ul, ol, dl {
   @include box-sizing(border-box);
 }
 
-// layout - primary content
+// +Layout - Primary Content
+// ====================
 .content-primary {
 
   .title-1 {
@@ -471,7 +456,8 @@ p, ul, ol, dl {
   }
 }
 
-// layout - supplemental content
+// +Layout - Supplemental Content
+// ====================
 .content-supplementary {
 
   > section {
@@ -479,9 +465,8 @@ p, ul, ol, dl {
   }
 }
 
+// +Layout - Grandfathered
 // ====================
-
-// layout - grandfathered
 .main-wrapper {
   position: relative;
   margin: 0 ($baseline*2);
@@ -517,9 +502,8 @@ p, ul, ol, dl {
   @include float(right);
 }
 
+// +UI - Actions
 // ====================
-
-// UI - actions
 .new-unit-item,
 .new-subsection-item,
 .new-policy-item {
@@ -550,22 +534,21 @@ p, ul, ol, dl {
   }
 }
 
+// +UI - Misc
 // ====================
-
-// misc
 hr.divide {
   @extend %cont-text-sr;
 }
 
 .item-details {
     float: left;
-    padding: 10px 0;
+    padding: ($baseline/2) 0;
 }
 
 .details {
     @extend %t-copy-sub1;
     display: none;
-    margin-bottom: 30px;
+    margin-bottom: ($baseline*1.5);
 }
 
 .window {
@@ -604,8 +587,8 @@ hr.divide {
   }
 
   .row {
-    margin-bottom: 10px;
-    padding-bottom: 10px;
+    margin-bottom: ($baseline/2);
+    padding-bottom: ($baseline/2);
     border-bottom: 1px solid #cbd1db;
   }
 }
@@ -638,9 +621,9 @@ hr.divide {
   }
 }
 
-// ====================
 
-// basic utility
+// +Utility - Basic
+// ====================
 
 // UI - semantically hide text
 .sr {
@@ -683,68 +666,63 @@ hr.divider {
   }
 }
 
-// ====================
+// lean/simple modal window
+.content-modal {
+  @include border-bottom-radius(2px);
+  @include box-sizing(border-box);
+  position: relative;
+  display: none;
+  width: 700px;
+  padding: ($baseline);
+  border: 1px solid $gray-d1;
+  background: $white;
+  box-shadow: 0 2px 4px $shadow-d1;
+  overflow: hidden;
 
-// js dependant
-body.js {
+  .action-modal-close {
+    @include transition(top $tmg-f3 ease-in-out 0s);
+    @include border-bottom-radius(3px);
+    position: absolute;
+    top: -3px;
+    right: $baseline;
+    padding: ($baseline/4) ($baseline/2) 0 ($baseline/2);
+    background: $gray-l3;
+    text-align: center;
 
-  // lean/simple modal window
-  .content-modal {
-    @include border-bottom-radius(2px);
-    @include box-sizing(border-box);
-    box-shadow: 0 2px 4px $shadow-d1;
-    position: relative;
-    display: none;
-    width: 700px;
-    overflow: hidden;
-    border: 1px solid $gray-d1;
-    padding: ($baseline);
-    background: $white;
-
-    .action-modal-close {
-      @include transition(top $tmg-f3 ease-in-out 0s);
-      @include border-bottom-radius(3px);
-      position: absolute;
-      top: -3px;
-      right: $baseline;
-      padding: ($baseline/4) ($baseline/2) 0 ($baseline/2);
-      background: $gray-l3;
-      text-align: center;
-
-      .label {
-        @extend %cont-text-sr;
-      }
-
-      [class^="icon-"] {
-        @extend %t-action1;
-        color: $white;
-      }
-
-      &:hover {
-        background: $blue;
-        top: 0;
-      }
+    .label {
+      @extend %cont-text-sr;
     }
 
-    img {
-      @include box-sizing(border-box);
-      width: 100%;
-      overflow-y: scroll;
-      padding: ($baseline/10);
-      border: 1px solid $gray-l4;
+    .icon {
+      @extend %t-action1;
+      color: $white;
     }
 
-    .title {
-      @extend %t-title5;
-      @extend %t-strong;
-      margin: 0 0 ($baseline/2) 0;
-      color: $gray-d3;
-    }
-
-    .description {
-      @extend %t-copy-sub2;
-      margin-top: ($baseline/2);
-      color: $gray-l1;
+    &:hover {
+      top: 0;
+      background: $blue;
     }
   }
+
+  img {
+    @include box-sizing(border-box);
+    width: 100%;
+    overflow-y: scroll;
+    padding: ($baseline/10);
+    border: 1px solid $gray-l4;
+  }
+
+  .title {
+    @extend %t-title5;
+    @extend %t-strong;
+    margin: 0 0 ($baseline/2) 0;
+    color: $gray-d3;
+  }
+
+  .description {
+    @extend %t-copy-sub2;
+    margin-top: ($baseline/2);
+    color: $gray-l1;
+  }
 }
+

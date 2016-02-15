@@ -9,18 +9,23 @@ from django.http import Http404, HttpResponseBadRequest
 from django.contrib.auth.decorators import login_required
 from edxmako.shortcuts import render_to_string
 
-from xmodule_modifiers import replace_static_urls, wrap_xblock, wrap_fragment, request_token
+from openedx.core.lib.xblock_utils import replace_static_urls, wrap_xblock, wrap_fragment, request_token
 from xmodule.x_module import PREVIEW_VIEWS, STUDENT_VIEW, AUTHOR_VIEW
 from xmodule.contentstore.django import contentstore
 from xmodule.error_module import ErrorDescriptor
 from xmodule.exceptions import NotFoundError, ProcessingError
+from xmodule.library_tools import LibraryToolsService
+from xmodule.services import SettingsService
 from xmodule.modulestore.django import modulestore, ModuleI18nService
+from xmodule.mixin import wrap_with_license
 from opaque_keys.edx.keys import UsageKey
 from xmodule.x_module import ModuleSystem
 from xblock.runtime import KvsFieldData
 from xblock.django.request import webob_to_django_response, django_to_webob_request
 from xblock.exceptions import NoSuchHandlerError
 from xblock.fragment import Fragment
+from student.auth import has_studio_read_access, has_studio_write_access
+from xblock_django.user_service import DjangoXBlockUserService
 
 from lms.djangoapps.lms_xblock.field_data import LmsFieldData
 from cms.lib.xblock.field_data import CmsFieldData
@@ -33,6 +38,7 @@ from .session_kv_store import SessionKeyValueStore
 from .helpers import render_from_lms
 
 from contentstore.views.access import get_user_role
+from xblock_config.models import StudioConfig
 
 __all__ = ['preview_handler']
 
@@ -87,7 +93,7 @@ class PreviewModuleSystem(ModuleSystem):  # pylint: disable=abstract-method
 
     def handler_url(self, block, handler_name, suffix='', query='', thirdparty=False):
         return reverse('preview_handler', kwargs={
-            'usage_key_string': unicode(block.location),
+            'usage_key_string': unicode(block.scope_ids.usage_id),
             'handler': handler_name,
             'suffix': suffix,
         }) + '?' + query
@@ -95,23 +101,59 @@ class PreviewModuleSystem(ModuleSystem):  # pylint: disable=abstract-method
     def local_resource_url(self, block, uri):
         return local_resource_url(block, uri)
 
-    def get_asides(self, block):
-        # TODO: Implement this to enable XBlockAsides on previews in Studio
-        return []
+    def applicable_aside_types(self, block):
+        """
+        Remove acid_aside and honor the config record
+        """
+        if not StudioConfig.asides_enabled(block.scope_ids.block_type):
+            return []
+        return [
+            aside_type
+            for aside_type in super(PreviewModuleSystem, self).applicable_aside_types(block)
+            if aside_type != 'acid_aside'
+        ]
+
+    def render_child_placeholder(self, block, view_name, context):
+        """
+        Renders a placeholder XBlock.
+        """
+        return self.wrap_xblock(block, view_name, Fragment(), context)
+
+    def layout_asides(self, block, context, frag, view_name, aside_frag_fns):
+        position_for_asides = '<!-- footer for xblock_aside -->'
+        result = Fragment()
+        result.add_frag_resources(frag)
+
+        for aside, aside_fn in aside_frag_fns:
+            aside_frag = self.wrap_aside(block, aside, view_name, aside_fn(block, context), context)
+            aside.save()
+            result.add_frag_resources(aside_frag)
+            frag.content = frag.content.replace(position_for_asides, position_for_asides + aside_frag.content)
+
+        result.add_content(frag.content)
+        return result
 
 
-class StudioUserService(object):
+class StudioPermissionsService(object):
     """
-    Provides a Studio implementation of the XBlock user service.
+    Service that can provide information about a user's permissions.
+
+    Deprecated. To be replaced by a more general authorization service.
+
+    Only used by LibraryContentDescriptor (and library_tools.py).
     """
 
     def __init__(self, request):
-        super(StudioUserService, self).__init__()
+        super(StudioPermissionsService, self).__init__()
         self._request = request
 
-    @property
-    def user_id(self):
-        return self._request.user.id
+    def can_read(self, course_key):
+        """ Does the user have read access to the given course/library? """
+        return has_studio_read_access(self._request.user, course_key)
+
+    def can_write(self, course_key):
+        """ Does the user have read access to the given course/library? """
+        return has_studio_write_access(self._request.user, course_key)
 
 
 def _preview_module_system(request, descriptor, field_data):
@@ -142,7 +184,11 @@ def _preview_module_system(request, descriptor, field_data):
         _studio_wrap_xblock,
     ]
 
-    descriptor.runtime._services['user'] = StudioUserService(request)  # pylint: disable=protected-access
+    if settings.FEATURES.get("LICENSING", False):
+        # stick the license wrapper in front
+        wrappers.insert(0, wrap_with_license)
+
+    descriptor.runtime._services['studio_user_permissions'] = StudioPermissionsService(request)  # pylint: disable=protected-access
 
     return PreviewModuleSystem(
         static_url=settings.STATIC_URL,
@@ -164,10 +210,14 @@ def _preview_module_system(request, descriptor, field_data):
         wrappers=wrappers,
         error_descriptor_class=ErrorDescriptor,
         get_user_role=lambda: get_user_role(request.user, course_id),
-        descriptor_runtime=descriptor.runtime,
+        # Get the raw DescriptorSystem, not the CombinedSystem
+        descriptor_runtime=descriptor._runtime,  # pylint: disable=protected-access
         services={
             "i18n": ModuleI18nService(),
             "field-data": field_data,
+            "library_tools": LibraryToolsService(modulestore()),
+            "settings": SettingsService(),
+            "user": DjangoXBlockUserService(request.user),
         },
     )
 
@@ -182,12 +232,18 @@ def _load_preview_module(request, descriptor):
     """
     student_data = KvsFieldData(SessionKeyValueStore(request))
     if _has_author_view(descriptor):
-        field_data = CmsFieldData(descriptor._field_data, student_data)  # pylint: disable=protected-access
+        wrapper = partial(CmsFieldData, student_data=student_data)
     else:
-        field_data = LmsFieldData(descriptor._field_data, student_data)  # pylint: disable=protected-access
+        wrapper = partial(LmsFieldData, student_data=student_data)
+
+    # wrap the _field_data upfront to pass to _preview_module_system
+    wrapped_field_data = wrapper(descriptor._field_data)  # pylint: disable=protected-access
+    preview_runtime = _preview_module_system(request, descriptor, wrapped_field_data)
+
     descriptor.bind_for_student(
-        _preview_module_system(request, descriptor, field_data),
-        field_data
+        preview_runtime,
+        request.user.id,
+        [wrapper]
     )
     return descriptor
 
@@ -212,9 +268,13 @@ def _studio_wrap_xblock(xblock, view, frag, context, display_name_only=False):
         template_context = {
             'xblock_context': context,
             'xblock': xblock,
+            'show_preview': context.get('show_preview', True),
             'content': frag.content,
             'is_root': is_root,
             'is_reorderable': is_reorderable,
+            'can_edit': context.get('can_edit', True),
+            'can_edit_visibility': context.get('can_edit_visibility', True),
+            'can_add': context.get('can_add', True),
         }
         html = render_to_string('studio_xblock_wrapper.html', template_context)
         frag = wrap_fragment(frag, html)
